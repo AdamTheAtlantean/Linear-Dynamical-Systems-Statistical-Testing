@@ -86,7 +86,14 @@ def build_var_xy(y, p)
 
         return B_hat
     
+
+    def unpack_B_to_Phi(B_hat, d_y, p):
+        """
+        """
+
+        Phi = []
     
+
     
 
 
