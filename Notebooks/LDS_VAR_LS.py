@@ -71,9 +71,23 @@ def build_var_xy(y, p)
         return X, Y
     
 
-    
-    
+    def fit_ls(Y, X):
+        """    
+        Solve min_B ||Y - XB||^2 using Ordinary Least Squares (OLS)
 
+        Returns B-hat
+
+        """
+
+        XtX = X.T @ X
+        XtY = X.T @ Y
+        #B_hat = np.linalg.solve(XtX, XtY) # apparently this has benefits relative to the vanilla below
+        B_hat = np.linalg.inv(XtX) @ XtY
+
+        return B_hat
+    
+    
+    
 
 
 
