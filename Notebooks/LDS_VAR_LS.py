@@ -48,7 +48,7 @@ def simluate_LDS (n, A, C, L, e_scale=0.2, seed=0):
 
 
 
-# 2)  -------------------------- Simulate the LDS --------------------------
+# 2)  -------------------------- Build the VAR(p) Design Matrices (i.e., Y = XB) --------------------------
 
 def build_var_xy(y, p)
     """
@@ -81,7 +81,7 @@ def build_var_xy(y, p)
 
         XtX = X.T @ X
         XtY = X.T @ Y
-        #B_hat = np.linalg.solve(XtX, XtY) # apparently this has benefits relative to the vanilla below
+        #B_hat = np.linalg.solve(XtX, XtY) # apparently this has benefits over the vanilla below
         B_hat = np.linalg.inv(XtX) @ XtY
 
         return B_hat
@@ -92,7 +92,43 @@ def build_var_xy(y, p)
         """
 
         Phi = []
+        for i in range(p):
+            block = B-hat[i * d_y : (i + 1) * d_y, :]
+            Phi.append(block.T)
+        return Phi
     
+
+    def main():
+        # Dimensions 
+        n = 1500
+        d_x = 2
+        d_y = 5
+        p = 10
+        seed = 0
+
+        rng = np.random.default_rng(seed)
+
+        # Define the systems matrices used to generate simulate data
+        A = np.array([[0.9, -0.2],
+                     [0.2, 0.8]])
+        C = rng.normal(size=(d_y, d_x))
+        L = rng.normal(size=(d_x, d_y))
+
+        # Check contraction from the theory
+        F = A - L @ C
+        rhoF = np.max(np.abs(np.linalg.eigenvals(F)))
+        print("Spectral radius rho(A - LC):", rhoF)
+
+        # Simulate constrained LDS
+        x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, e_scale=0.2, seed=seed)
+        print("x shape:" x.shape, "y_shape:", y.shape)
+
+        # VAR(p) regression matrices 
+        X, Y = build_var_xy(y, p=p)
+        print("X shape:", X.shape, "Y shape:", Y.shape)
+
+        # Least squares estiamte of B
+        B_hat - fit_ls(Y=Y, X=X)
 
     
 
