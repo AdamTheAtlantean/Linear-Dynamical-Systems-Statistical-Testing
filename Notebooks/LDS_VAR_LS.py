@@ -19,7 +19,7 @@ def simluate_LDS (n, A, C, L, e_scale=0.2, seed=0):
     Simulating the system as follows:
 
     x_{k+1} = Ax_k + Le_k
-    y_k     = Cx_k + e_k (where e_k ~ N(O, e_sclae^2 I_{d_y}))
+    y_k     = Cx_k + e_k 
 
     Returns:
         x: (n, d_x)
@@ -27,6 +27,7 @@ def simluate_LDS (n, A, C, L, e_scale=0.2, seed=0):
         e: (n, d_y)
     
     """
+
 
     rng = np.random.default_rng(seed) # fixed seed for reproducible randomness
     d_x = A.shape[0]
@@ -59,84 +60,120 @@ def build_var_xy(y, p):
     if p < 1:
         raise ValueError("p must be >= 1")
     if n <= p:
-        raise ValueError("N must be < p")
+        raise ValueError("N must be > p")
     
     Y = y[p:]
     X = np.zeros((n - p, p * d_y))
 
     for i in range(1, p + 1):
         # lag 'i' fills columns with y_{t-i}
-        X[:, (i - 1) * d_y : i * d_y] = y[p - 1 : n - i]
+        X[:, (i - 1) * d_y : i * d_y] = y[p - i : n - i]
 
-        return X, Y
+    return X, Y
     
 
-    def fit_ls(Y, X):
-        """    
-        Solve min_B ||Y - XB||^2 using Ordinary Least Squares (OLS)
+def fit_ls(Y, X):
+    """    
+    Solve min_B ||Y - XB||^2 using Ordinary Least Squares (OLS)
 
-        Returns B-hat
+    Returns B-hat
 
-        """
+    """
 
-        XtX = X.T @ X
-        XtY = X.T @ Y
-        #B_hat = np.linalg.solve(XtX, XtY) # apparently this has benefits over the vanilla below
-        B_hat = np.linalg.inv(XtX) @ XtY
+    XtX = X.T @ X
+    XtY = X.T @ Y
+    #B_hat = np.linalg.solve(XtX, XtY) # apparently this has benefits over the vanilla below
+    B_hat = np.linalg.inv(XtX) @ XtY
 
-        return B_hat
+    return B_hat
+
+
+def unpack_B_to_Phi(B_hat, d_y, p):
+    """
+    """
+
+    Phi = []
+    for i in range(p):
+        block = B_hat[i * d_y : (i + 1) * d_y, :]
+        Phi.append(block.T)
+    return Phi
     
 
-    def unpack_B_to_Phi(B_hat, d_y, p):
-        """
-        """
+def main():
+    # Dimensions 
+    n = 1500
+    d_x = 2
+    d_y = 5
+    p = 10
+    seed = 0
 
-        Phi = []
-        for i in range(p):
-            block = B_hat[i * d_y : (i + 1) * d_y, :]
-            Phi.append(block.T)
-        return Phi
-    
+    rng = np.random.default_rng(seed)
 
-    def main():
-        # Dimensions 
-        n = 1500
-        d_x = 2
-        d_y = 5
-        p = 10
-        seed = 0
+    # Define the systems matrices used to generate simulate data
+    A = np.array([[0.9, -0.2],
+                    [0.2, 0.8]])
+    C = rng.normal(size=(d_y, d_x))
+    L = rng.normal(size=(d_x, d_y))
 
-        rng = np.random.default_rng(seed)
+    # Check contraction from the theory
+    F = A - L @ C
+    rhoF = np.max(np.abs(np.linalg.eigvals(F)))
+    print("Spectral radius rho(A - LC):", rhoF)
 
-        # Define the systems matrices used to generate simulate data
-        A = np.array([[0.9, -0.2],
-                     [0.2, 0.8]])
-        C = rng.normal(size=(d_y, d_x))
-        L = rng.normal(size=(d_x, d_y))
-
-        # Check contraction from the theory
-        F = A - L @ C
-        rhoF = np.max(np.abs(np.linalg.eigenvals(F)))
-        print("Spectral radius rho(A - LC):", rhoF)
-
-        # Simulate constrained LDS
-        x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, e_scale=0.2, seed=seed)
-        print("x shape:", x.shape, "y shape:", y.shape)
+    # Simulate constrained LDS
+    x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, e_scale=0.2, seed=seed)
+    print("x shape:", x.shape, "y shape:", y.shape)
 
 
-        # VAR(p) regression matrices 
-        X, Y = build_var_xy(y, p=p)
-        print("X shape:", X.shape, "Y shape:", Y.shape)
+    # VAR(p) regression matrices 
+    X, Y = build_var_xy(y, p=p)
+    print("X shape:", X.shape, "Y shape:", Y.shape)
 
-        # Least squares estiamte of B
-        B_hat = fit_ls(Y=Y, X=X)
-        print("B-hat shape:", B_hat.shape)
+    # Least squares estiamte of B
+    B_hat = fit_ls(Y=Y, X=X)
+    print("B-hat shape:", B_hat.shape)
 
-        # Unpacking into VAR coeff. matrices
-        Phi_list = unpack_B_to_Phi(B_hat, d_y=d_y, p=p)
-        print("Phi_1 shape:", Phi_list[0].shape)
+    # Unpacking into VAR coeff. matrices
+    Phi_list = unpack_B_to_Phi(B_hat, d_y=d_y, p=p)
+    print("Phi_1 shape:", Phi_list[0].shape)
 
-        
+    # Predict and compute residuals 
+    Y_hat = X @ B_hat
+    residuals = Y - Y_hat
+    mse = np.mean(residuals**2)
+    print("Training MSE,", mse)
+
+    # Plotting a single output dimension and its VAR prediction
+    j = 1 # output component index
+    t = np.arange(n)
+
+    y_true = y[:, j]
+    y_pred = np.full(n, np.nan)
+    y_pred[p:] = Y_hat[:, j]
+
+    plt.figure()
+    plt.plot(t, y_true, label=f"y[:, {j}] true")
+    plt.plot(t, y_pred, label=f"VAR({p}) prediction", linewidth=2)
+    plt.title(f"Constrained LDS -> VAR({p}) via LS (output dim {j})")
+    plt.xlabel("time index 'k'")
+    plt.ylabel("value")
+    plt.legend()
+    plt.tight_layout
+    plt.show()
+
+    # Plot residuals for specific component
+    plt.figure()
+    plt.plot(t[p:], residuals[:, j])
+    plt.title(f"Residuals (y - XB) for output dim {j}")
+    plt.xlabel("time index 'k'")
+    plt.ylabel("residual")
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
+
 
         
 
