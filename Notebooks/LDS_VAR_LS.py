@@ -82,8 +82,8 @@ def fit_ls(Y, X):
 
     XtX = X.T @ X
     XtY = X.T @ Y
-    #B_hat = np.linalg.solve(XtX, XtY) # apparently this has benefits over the vanilla below
-    B_hat = np.linalg.inv(XtX) @ XtY
+    B_hat = np.linalg.solve(XtX, XtY) # apparently this has benefits over the vanilla below
+    #B_hat = np.linalg.inv(XtX) @ XtY
 
     return B_hat
 
@@ -176,7 +176,12 @@ if __name__ == "__main__":
 
 
         
-
+# Notes
+# See the norm between Phi and C(A -LC)
+# contract spectral radius (0.8 & 1) see if there is a difference using the metric above
+# remove seed (perhaps negate with 'for" loop)
+# how does one variance compare to the other (short memory and long memory)
+# from a l and c we generate several trajectories 
     
 
 
