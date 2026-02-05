@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 # 1)  -------------------------- Simulate the LDS --------------------------
 
-def simluate_LDS (n, A, C, L, e_scale=0.2, seed=0):
+def simluate_LDS (n, A, C, L, rng, e_scale=0.2):
     """
     Simulating the system as follows:
 
@@ -28,16 +28,16 @@ def simluate_LDS (n, A, C, L, e_scale=0.2, seed=0):
     
     """
 
-
-    rng = np.random.default_rng(seed) # fixed seed for reproducible randomness
-    d_x = A.shape[0]
+    # State and output dimensions from system matrices
+    d_x = A.shape[0] 
     d_y = C.shape[0]
 
+    # Create matrices for x and y with appropriate dimensions 
     x = np.zeros((n, d_x))
     y = np.zeros((n, d_y))
     e = e_scale * rng.normal(size=(n, d_y))
 
-    # initial state
+    # Initial state
     x[0] = rng.normal(size=d_x)
     y[0] =  C @ x[0] + e[0]
 
@@ -62,11 +62,16 @@ def build_var_xy(y, p):
     if n <= p:
         raise ValueError("N must be > p")
     
+
+    # Build the target matrix
     Y = y[p:]
+    # Allocate design matrix
     X = np.zeros((n - p, p * d_y))
+
 
     for i in range(1, p + 1):
         # lag 'i' fills columns with y_{t-i}
+        # Fill a block of columns in X with a shifted slice of 'y'.
         X[:, (i - 1) * d_y : i * d_y] = y[p - i : n - i]
 
     return X, Y
@@ -105,9 +110,8 @@ def main():
     d_x = 2
     d_y = 5
     p = 10
-    seed = 0
 
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng()
 
     # Define the systems matrices used to generate simulate data
     A = np.array([[0.9, -0.2],
@@ -115,19 +119,32 @@ def main():
     C = rng.normal(size=(d_y, d_x))
     L = rng.normal(size=(d_x, d_y))
 
+ 
+
     # Check contraction from the theory
-    F = A - L @ C
-    rhoF = np.max(np.abs(np.linalg.eigvals(F)))
+    # Ensure spectral radius is below desired threshold (i.e., < 1)
+    L0_norm = np.linalg.norm(L)
+
+    target =  0.98
+    for _ in range(10):
+        F = A - L @ C
+        rhoF = np.max(np.abs(np.linalg.eigvals(F)))
+        if rhoF <= target:
+            break
+        L = L * (target / rhoF)
+
     print("Spectral radius rho(A - LC):", rhoF)
+    print("L shrink factor:", np.linalg.norm(L) / L0_norm)
+
 
     # Simulate constrained LDS
-    x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, e_scale=0.2, seed=seed)
+    x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=0.2)
     print("x shape:", x.shape, "y shape:", y.shape)
 
 
     # VAR(p) regression matrices 
     X, Y = build_var_xy(y, p=p)
-    print("X shape:", X.shape, "Y shape:", Y.shape)
+    print("X shape:", X.shape, "Y shape:", Y.shape) 
 
     # Least squares estiamte of B
     B_hat = fit_ls(Y=Y, X=X)
@@ -136,6 +153,24 @@ def main():
     # Unpacking into VAR coeff. matrices
     Phi_list = unpack_B_to_Phi(B_hat, d_y=d_y, p=p)
     print("Phi_1 shape:", Phi_list[0].shape)
+    
+
+    # --------- Compare Phi_hat_i to theoretical Phi_i = C (A-LC)^(i-1) L ---------
+
+    F = A - L @ C
+    Fpow = np.eye(d_x)   # (A-LC)^(i-1), starts at power 0
+
+    phi_sq_errors = []
+
+    for i in range(p):
+        Phi_theory_i = C @ Fpow @ L               # C(A-LC)^(i-1) L
+        diff = Phi_list[i] - Phi_theory_i
+        err_sq = np.linalg.norm(diff, 'fro')**2   # squared Frobenius norm
+        phi_sq_errors.append(err_sq)
+        Fpow = Fpow @ F                           # next power
+
+    print("Mean squared Phi error:", np.mean(phi_sq_errors))
+
 
     # Predict and compute residuals 
     Y_hat = X @ B_hat
@@ -179,10 +214,10 @@ if __name__ == "__main__":
 # Notes
 # See the norm between Phi and C(A -LC)
 # contract spectral radius (0.8 & 1) see if there is a difference using the metric above
-# remove seed (perhaps negate with 'for" loop)
+# remove seed (perhaps negate with 'for" loop) - CHECK
 # how does one variance compare to the other (short memory and long memory)
 # from a l and c we generate several trajectories 
-    
+# generate more plots to better understand behavior 
 
 
 
