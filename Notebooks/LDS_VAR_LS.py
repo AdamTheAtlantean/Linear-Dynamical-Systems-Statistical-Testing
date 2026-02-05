@@ -105,6 +105,88 @@ def unpack_B_to_Phi(B_hat, d_y, p):
 
 
 
+def plot_variance_of_phi_error_across_lags(
+    targets=(0.8, 0.98),
+    trials=30,
+    n=1500,
+    d_x=2,
+    d_y=5,
+    p=10,
+    e_scale=0.2,
+    max_tries=5000,
+    seed=None,
+):
+    """
+    For each target rho(A-LC), run `trials` experiments.
+    In each experiment:
+      - sample C,L until rho(A-LC) <= target
+      - simulate, fit VAR(p), compute per-lag squared Phi errors e_i
+      - compute Var(e_1..e_p) across lags
+    Then plot mean±std of Var(e_i) over trials for each target.
+    """
+
+    rng = np.random.default_rng(seed)
+    A = np.array([[0.9, -0.2],
+                  [0.2,  0.8]])
+
+    var_across_lags_means = []
+    var_across_lags_stds  = []
+    achieved_rhos = []
+
+    for target in targets:
+        vars_this_target = []
+        rhos_this_target = []
+
+        for _ in range(trials):
+            # --- resample C,L until rho(A-LC) <= target ---
+            for _try in range(max_tries):
+                C = rng.normal(size=(d_y, d_x))
+                L = rng.normal(size=(d_x, d_y))
+                F = A - L @ C
+                rhoF = np.max(np.abs(np.linalg.eigvals(F)))
+                if rhoF <= target:
+                    break
+            else:
+                raise RuntimeError(f"Couldn't find C,L with rho(A-LC) <= {target} after {max_tries} tries.")
+
+            # simulate + fit VAR
+            x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
+            X, Y = build_var_xy(y, p=p)
+            B_hat = fit_ls(Y=Y, X=X)
+            Phi_list = unpack_B_to_Phi(B_hat, d_y=d_y, p=p)
+
+            # per-lag squared Phi errors e_i
+            phi_sq_errors = []
+            Fpow = np.eye(d_x)
+            for i in range(p):
+                Phi_theory_i = C @ Fpow @ L
+                diff = Phi_list[i] - Phi_theory_i
+                phi_sq_errors.append(np.linalg.norm(diff, 'fro')**2)
+                Fpow = Fpow @ F
+
+            # variance of error across lags (this is the "variance" in the note)
+            vars_this_target.append(np.var(phi_sq_errors, ddof=1))
+            rhos_this_target.append(rhoF)
+
+        var_across_lags_means.append(np.mean(vars_this_target))
+        var_across_lags_stds.append(np.std(vars_this_target))
+        achieved_rhos.append(np.mean(rhos_this_target))
+
+    # --- plot mean ± std ---
+    x = np.arange(len(targets))
+    plt.figure()
+    plt.errorbar(x, var_across_lags_means, yerr=var_across_lags_stds, marker='o', capsize=4)
+    plt.xticks(x, [f"target={t}\n(avg rho≈{achieved_rhos[i]:.3f})" for i, t in enumerate(targets)])
+    plt.xlabel(r"Contraction target for $\rho(A-LC)$")
+    plt.ylabel(r"$\mathrm{Var}\left(\|\hat{\Phi}_i-\Phi_i\|_F^2\right)$ across $i=1..p$")
+    plt.title("Short vs long memory: variance of Phi-error across lags")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+
+
     
 
 def main():
@@ -128,13 +210,14 @@ def main():
     # Ensure spectral radius is below desired threshold (i.e., < 1)
     L0_norm = np.linalg.norm(L)
 
+    max_iter = 50
     target =  0.98
-    for _ in range(10):
+    for _ in range(max_iter):
         F = A - L @ C
         rhoF = np.max(np.abs(np.linalg.eigvals(F)))
         if rhoF <= target:
             break
-        L = L * (target / rhoF)
+        L *= (target / rhoF)
 
     F = A - L @ C
     rhoF = np.max(np.abs(np.linalg.eigvals(F)))
@@ -161,6 +244,11 @@ def main():
     print("Phi_1 shape:", Phi_list[0].shape)
 
 
+    # Comparing variance of different spectral radii (i.e., .80 vs .98, short term vs long term memory respectively)
+    plot_variance_of_phi_error_across_lags(targets=(0.8, 0.98), trials=30, p=10)
+
+
+
 
 
     # --------- Compare Phi_hat_i to theoretical Phi_i = C (A-LC)^(i-1) L ---------
@@ -178,8 +266,10 @@ def main():
         Fpow = Fpow @ F                           # next power
 
     print("Mean squared Phi error:", np.mean(phi_sq_errors))
+    print("Var across lags of Phi error:", np.var(phi_sq_errors, ddof=1))
 
-    #
+
+
     plt.figure()
     plt.plot(range(1, p+1), phi_sq_errors, marker='o')
     plt.xlabel("Lag index i")
@@ -210,7 +300,7 @@ def main():
     plt.xlabel("time index 'k'")
     plt.ylabel("value")
     plt.legend()
-    plt.tight_layout
+    plt.tight_layout()
     plt.show()
 
     # Plot residuals for specific component
@@ -224,8 +314,6 @@ def main():
 
 
 
-
-
 if __name__ == "__main__":
     main()
 
@@ -234,7 +322,6 @@ if __name__ == "__main__":
 # Notes
 # See the norm between Phi and C(A -LC)
 # contract spectral radius (0.8 & 1) see if there is a difference using the metric above
-# remove seed (perhaps negate with 'for" loop) - CHECK
 # how does one variance compare to the other (short memory and long memory)
 # from a l and c we generate several trajectories 
 # generate more plots to better understand behavior 
