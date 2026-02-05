@@ -304,13 +304,13 @@ def main():
     plt.show()
 
     # Plot residuals for specific component
-    plt.figure()
-    plt.plot(t[p:], residuals[:, j])
-    plt.title(f"Residuals (y - XB) for output dim {j}")
-    plt.xlabel("time index 'k'")
-    plt.ylabel("residual")
-    plt.tight_layout()
-    plt.show()
+    #plt.figure()
+    #plt.plot(t[p:], residuals[:, j])
+    #plt.title(f"Residuals (y - XB) for output dim {j}")
+    #plt.xlabel("time index 'k'")
+    #lt.ylabel("residual")
+    #plt.tight_layout()
+    #plt.show()
 
 
 
@@ -319,9 +319,3 @@ if __name__ == "__main__":
 
 
         
-# Notes
-# See the norm between Phi and C(A -LC)
-# contract spectral radius (0.8 & 1) see if there is a difference using the metric above
-# how does one variance compare to the other (short memory and long memory)
-# from a l and c we generate several trajectories 
-# generate more plots to better understand behavior 
