@@ -186,15 +186,12 @@ def plot_variance_of_phi_error_across_lags(
 
 
 
-
-    
-
 def main():
     # Dimensions 
     n = 1500
     d_x = 2
     d_y = 5
-    p = 10
+    p = 35
 
     rng = np.random.default_rng()
 
@@ -245,7 +242,7 @@ def main():
 
 
     # Comparing variance of different spectral radii (i.e., .80 vs .98, short term vs long term memory respectively)
-    plot_variance_of_phi_error_across_lags(targets=(0.8, 0.98), trials=30, p=10)
+    plot_variance_of_phi_error_across_lags(targets=(0.80, 0.98), trials=30, p=10)
 
 
 
