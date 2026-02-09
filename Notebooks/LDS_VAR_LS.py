@@ -185,13 +185,115 @@ def plot_variance_of_phi_error_across_lags(
     plt.show()
 
 
+def p_sensitivity_report(
+    p_list=(8, 10, 12),
+    regimes=(
+        ("short", 0.75, 0.80),
+        ("long",  0.95, 0.98),
+    ),
+    trials=30,
+    n=1500,
+    d_x=2,
+    d_y=5,
+    e_scale=0.2,
+    max_tries=20000,
+    seed=None,
+):
+    """
+    Runs a p-sensitivity test for different memory regimes.
+
+    For each regime (name, rho_low, rho_high):
+      - repeatedly sample random C,L until rho(A - L C) lies in [rho_low, rho_high]
+      - simulate LDS
+      - fit VAR(p) by LS
+      - compute:
+          * Training MSE = mean((Y - X B_hat)^2)
+          * Mean Phi error = mean_i ||Phi_hat_i - C(A-LC)^(i-1)L||_F^2
+          * Var across lags of Phi error = Var_i(||...||_F^2)
+    Prints mean ± std across trials for each p.
+    """
+
+    rng = np.random.default_rng(seed)
+
+    A = np.array([[0.9, -0.2],
+                  [0.2,  0.8]])
+
+    def sample_CL_in_band(rho_low, rho_high):
+        for _ in range(max_tries):
+            C = rng.normal(size=(d_y, d_x))
+            L = rng.normal(size=(d_x, d_y))
+            F = A - L @ C
+            rhoF = np.max(np.abs(np.linalg.eigvals(F)))
+            if rho_low <= rhoF <= rho_high:
+                return C, L, F, rhoF
+        raise RuntimeError(f"Couldn't sample C,L with rho in [{rho_low}, {rho_high}] after {max_tries} tries.")
+
+    print("\n====================== p SENSITIVITY REPORT ======================")
+    print(f"trials={trials}, n={n}, d_y={d_y}, e_scale={e_scale}")
+    print("p_list =", list(p_list))
+    print("regimes =", regimes)
+
+    for regime_name, rho_low, rho_high in regimes:
+        print(f"\n--- Regime: {regime_name}  (rho in [{rho_low}, {rho_high}]) ---")
+
+        for p in p_list:
+            if p < 1:
+                raise ValueError(f"p must be >= 1 (got p={p})")
+            if n <= p:
+                raise ValueError(f"need n > p (got n={n}, p={p})")
+
+            mses = []
+            phi_means = []
+            phi_vars = []
+            rhos = []
+
+            for _ in range(trials):
+                C, L, F, rhoF = sample_CL_in_band(rho_low, rho_high)
+
+                # simulate
+                x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
+
+                # fit VAR(p)
+                X, Y = build_var_xy(y, p=p)
+                B_hat = fit_ls(Y=Y, X=X)
+
+                # training MSE
+                Y_hat = X @ B_hat
+                residuals = Y - Y_hat
+                mses.append(float(np.mean(residuals**2)))
+
+                # unpack Phi-hat
+                Phi_list = unpack_B_to_Phi(B_hat, d_y=d_y, p=p)
+
+                # compute per-lag squared Phi errors
+                phi_sq_errors = []
+                Fpow = np.eye(d_x)  # F^(i-1), starts at i=1 -> power 0
+                for i in range(p):
+                    Phi_theory_i = C @ Fpow @ L
+                    diff = Phi_list[i] - Phi_theory_i
+                    phi_sq_errors.append(np.linalg.norm(diff, 'fro')**2)
+                    Fpow = Fpow @ F
+
+                phi_means.append(float(np.mean(phi_sq_errors)))
+                # ddof=1 gives sample variance; if p==1 we'd guard, but your p>=8
+                phi_vars.append(float(np.var(phi_sq_errors, ddof=1)))
+                rhos.append(float(rhoF))
+
+            print(f"\np = {p}")
+            print(f"  achieved rhoF:   {np.mean(rhos):.4f} ± {np.std(rhos, ddof=1):.4f}")
+            print(f"  Training MSE:    {np.mean(mses):.6f} ± {np.std(mses, ddof=1):.6f}")
+            print(f"  Mean Phi error:  {np.mean(phi_means):.6f} ± {np.std(phi_means, ddof=1):.6f}")
+            print(f"  Var Phi error:   {np.mean(phi_vars):.6f} ± {np.std(phi_vars, ddof=1):.6f}")
+
+
+
 
 def main():
     # Dimensions 
     n = 1500
     d_x = 2
     d_y = 5
-    p = 35
+    p = 10
 
     rng = np.random.default_rng()
 
@@ -242,9 +344,13 @@ def main():
 
 
     # Comparing variance of different spectral radii (i.e., .80 vs .98, short term vs long term memory respectively)
-    plot_variance_of_phi_error_across_lags(targets=(0.80, 0.98), trials=30, p=10)
+    #plot_variance_of_phi_error_across_lags(targets=(0.80, 0.98), trials=30, p=10)
 
-
+    p_sensitivity_report(
+    p_list=(8, 10, 12),
+    regimes=(("short", 0.75, 0.80), ("long", 0.95, 0.98)),
+    trials=30,
+)
 
 
 
