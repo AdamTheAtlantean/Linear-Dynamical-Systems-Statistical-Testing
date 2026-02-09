@@ -287,7 +287,7 @@ def p_sensitivity_report(
 
 
 
-def plot_phi_error_spread_per_lag_rhoband(
+def phi_error_spread(
     regime_name="short",
     rho_low=0.75,
     rho_high=0.80,
@@ -358,6 +358,30 @@ def plot_phi_error_spread_per_lag_rhoband(
 
     plt.figure()
     plt.errorbar(lags, mean_err, yerr=std_err, marker='o', capsize=4)
+    for i, (m, s) in enumerate(zip(mean_err, std_err), start=1):
+
+    # lift early lags a bit more
+        if i in (0, 2):
+            y_pos = (m + s) * 2
+        else:
+            y_pos = (m + s) * 1.05
+
+        plt.text(
+            i,
+            y_pos,
+            f"{m:.2e}\n±{s:.2e}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+            bbox=dict(
+                boxstyle="round,pad=0.25",
+                fc="white",
+                ec="gray",
+                alpha=0.85
+            )
+        )
+
     plt.xlabel("Lag index i")
     plt.ylabel(r"Across-trial mean ± std of $\|\hat{\Phi}_i-\Phi_i^*\|_F^2$")
     plt.title(
@@ -502,17 +526,17 @@ def main():
 
 
         # Short memory regime
-    plot_phi_error_spread_per_lag_rhoband(
+    phi_error_spread(
         regime_name="short",
         rho_low=0.75, rho_high=0.80,
-        trials=30, n=1500, p=10, e_scale=0.2
+        trials=300, n=1500, p=10, e_scale=0.2
     )
 
     # Long memory regime
-    plot_phi_error_spread_per_lag_rhoband(
+    phi_error_spread(
         regime_name="long",
         rho_low=0.95, rho_high=0.98,
-        trials=30, n=1500, p=10, e_scale=0.2
+        trials=300, n=1500, p=10, e_scale=0.2
 )
 
 
