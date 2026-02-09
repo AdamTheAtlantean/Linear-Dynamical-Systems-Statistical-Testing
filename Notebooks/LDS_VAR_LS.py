@@ -300,7 +300,7 @@ def plot_phi_error_spread_per_lag_rhoband(
     max_tries=20000,
 ):
     """
-    Option A (no seed): For each trial, resample (C,L) such that rho(F)=rho(A-LC) in [rho_low, rho_high].
+    For each trial, resample (C,L) such that rho(F)=rho(A-LC) in [rho_low, rho_high].
     Then simulate, fit VAR(p) via LS, and compute per-lag squared Frobenius errors:
         e_i = ||Phi_hat_i - Phi_i^*||_F^2
     where Phi_i^* = C F^(i-1) L (with F = A - L C).
