@@ -300,7 +300,7 @@ def phi_error_spread(
     max_tries=20000,
 ):
     """
-    For each trial, resample (C,L) such that rho(F)=rho(A-LC) in [rho_low, rho_high].
+    For each trial, resample (C,L) such that rho(F)=rho(A-LC) in a set range (i.e., [rho_low, rho_high]).
     Then simulate, fit VAR(p) via LS, and compute per-lag squared Frobenius errors:
         e_i = ||Phi_hat_i - Phi_i^*||_F^2
     where Phi_i^* = C F^(i-1) L (with F = A - L C).
@@ -354,43 +354,38 @@ def phi_error_spread(
     mean_err = phi_errs.mean(axis=0)
     std_err  = phi_errs.std(axis=0, ddof=1)
 
-    lags = np.arange(1, p + 1)
 
-    plt.figure()
-    plt.errorbar(lags, mean_err, yerr=std_err, marker='o', capsize=4)
-    for i, (m, s) in enumerate(zip(mean_err, std_err), start=1):
+    plt.figure(figsize=(8, 4))
 
-    # lift early lags a bit more
-        if i in (0, 2):
-            y_pos = (m + s) * 2
-        else:
-            y_pos = (m + s) * 1.05
+    # Boxplot expects a list of arrays, one per box
+    data_per_lag = [phi_errs[:, i] for i in range(p)]
 
-        plt.text(
-            i,
-            y_pos,
-            f"{m:.2e}\n±{s:.2e}",
-            ha="center",
-            va="bottom",
-            fontsize=10,
-            fontweight="bold",
-            bbox=dict(
-                boxstyle="round,pad=0.25",
-                fc="white",
-                ec="gray",
-                alpha=0.85
-            )
-        )
+    plt.boxplot(
+        data_per_lag,
+        positions=np.arange(1, p + 1),
+        widths=0.6,
+        showfliers=True,      # show outliers
+        patch_artist=True,  
+    )
+
+    for box in plt.gca().artists:
+        box.set_facecolor("#cfe2f3")
+        box.set_edgecolor("black")
+
+
 
     plt.xlabel("Lag index i")
-    plt.ylabel(r"Across-trial mean ± std of $\|\hat{\Phi}_i-\Phi_i^*\|_F^2$")
+    plt.ylabel(r"$\|\hat{\Phi}_i - \Phi_i^*\|_F^2$")
     plt.title(
-        f"{regime_name} memory: per-lag Phi error spread\n"
-        f"rho(F) in [{rho_low}, {rho_high}], trials={trials}, avg rho≈{rhos.mean():.3f}"
+        f"{regime_name} memory: VAR coefficient error distribution\n"
+        f"rho(F) in [{rho_low}, {rho_high}], trials={trials}"
     )
-    plt.grid(True)
+
+    plt.yscale("log")
+    plt.grid(True, which="both", axis="y", alpha=0.3)
     plt.tight_layout()
     plt.show()
+
 
     return phi_errs, mean_err, std_err, rhos
 
@@ -529,15 +524,30 @@ def main():
     phi_error_spread(
         regime_name="short",
         rho_low=0.75, rho_high=0.80,
-        trials=30, n=1500, p=7, e_scale=0.2
+        trials=30, n=1500, p=25, e_scale=0.2
     )
 
     # Long memory regime
     phi_error_spread(
         regime_name="long",
         rho_low=0.95, rho_high=0.98,
-        trials=30, n=1500, p=7, e_scale=0.2
+        trials=30, n=1500, p=25, e_scale=0.2
     )
+
+    # Very short memory regime
+    phi_error_spread(
+        regime_name="very short",
+        rho_low=0.25, rho_high=0.35,
+        trials=30, n=1500, p=25, e_scale=0.2
+    )
+
+
+    # Very long memory regime
+    phi_error_spread(
+        regime_name="very long",
+        rho_low=0.985, rho_high=.9999,
+        trials=30, n=1500, p=25, e_scale=0.2
+    )   
 
 
 
