@@ -287,6 +287,91 @@ def p_sensitivity_report(
 
 
 
+def plot_phi_error_spread_per_lag_rhoband(
+    regime_name="short",
+    rho_low=0.75,
+    rho_high=0.80,
+    trials=50,
+    n=1500,
+    d_x=2,
+    d_y=5,
+    p=10,
+    e_scale=0.2,
+    max_tries=20000,
+):
+    """
+    Option A (no seed): For each trial, resample (C,L) such that rho(F)=rho(A-LC) in [rho_low, rho_high].
+    Then simulate, fit VAR(p) via LS, and compute per-lag squared Frobenius errors:
+        e_i = ||Phi_hat_i - Phi_i^*||_F^2
+    where Phi_i^* = C F^(i-1) L (with F = A - L C).
+    Finally plot mean ± std of e_i across trials, for each lag i=1..p.
+
+    Returns:
+        phi_errs: (trials, p) array of errors
+        mean_err: (p,) mean across trials
+        std_err:  (p,) std across trials
+        rhos:     (trials,) achieved rho(F) values
+    """
+
+    rng = np.random.default_rng()  # no seed: fresh randomness each run
+
+    A = np.array([[0.9, -0.2],
+                  [0.2,  0.8]])
+
+    def sample_CL_in_band():
+        for _ in range(max_tries):
+            C = rng.normal(size=(d_y, d_x))
+            L = rng.normal(size=(d_x, d_y))
+            F = A - L @ C
+            rhoF = np.max(np.abs(np.linalg.eigvals(F)))
+            if rho_low <= rhoF <= rho_high:
+                return C, L, F, rhoF
+        raise RuntimeError(f"Couldn't sample C,L with rho in [{rho_low}, {rho_high}] after {max_tries} tries.")
+
+    phi_errs = np.zeros((trials, p))
+    rhos = np.zeros(trials)
+
+    for t in range(trials):
+        C, L, F, rhoF = sample_CL_in_band()
+        rhos[t] = rhoF
+
+        # simulate
+        x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
+
+        # fit VAR(p)
+        X, Y = build_var_xy(y, p=p)
+        B_hat = fit_ls(Y=Y, X=X)
+        Phi_hat_list = unpack_B_to_Phi(B_hat, d_y=d_y, p=p)
+
+        # theoretical Phi_i^* for this trial
+        Fpow = np.eye(d_x)
+        for i in range(p):
+            Phi_star_i = C @ Fpow @ L
+            diff = Phi_hat_list[i] - Phi_star_i
+            phi_errs[t, i] = np.linalg.norm(diff, 'fro')**2
+            Fpow = Fpow @ F
+
+    mean_err = phi_errs.mean(axis=0)
+    std_err  = phi_errs.std(axis=0, ddof=1)
+
+    lags = np.arange(1, p + 1)
+
+    plt.figure()
+    plt.errorbar(lags, mean_err, yerr=std_err, marker='o', capsize=4)
+    plt.xlabel("Lag index i")
+    plt.ylabel(r"Across-trial mean ± std of $\|\hat{\Phi}_i-\Phi_i^*\|_F^2$")
+    plt.title(
+        f"{regime_name} memory: per-lag Phi error spread\n"
+        f"rho(F) in [{rho_low}, {rho_high}], trials={trials}, avg rho≈{rhos.mean():.3f}"
+    )
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    return phi_errs, mean_err, std_err, rhos
+
+
+
 
 def main():
     # Dimensions 
@@ -414,6 +499,22 @@ def main():
     #lt.ylabel("residual")
     #plt.tight_layout()
     #plt.show()
+
+
+        # Short memory regime
+    plot_phi_error_spread_per_lag_rhoband(
+        regime_name="short",
+        rho_low=0.75, rho_high=0.80,
+        trials=30, n=1500, p=10, e_scale=0.2
+    )
+
+    # Long memory regime
+    plot_phi_error_spread_per_lag_rhoband(
+        regime_name="long",
+        rho_low=0.95, rho_high=0.98,
+        trials=30, n=1500, p=10, e_scale=0.2
+)
+
 
 
 
