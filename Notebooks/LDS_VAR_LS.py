@@ -529,14 +529,14 @@ def main():
     phi_error_spread(
         regime_name="short",
         rho_low=0.75, rho_high=0.80,
-        trials=300, n=1500, p=10, e_scale=0.2
+        trials=30, n=1500, p=7, e_scale=0.2
     )
 
     # Long memory regime
     phi_error_spread(
         regime_name="long",
         rho_low=0.95, rho_high=0.98,
-        trials=300, n=1500, p=10, e_scale=0.2
+        trials=30, n=1500, p=7, e_scale=0.2
     )
 
 
