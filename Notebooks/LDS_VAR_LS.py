@@ -525,7 +525,7 @@ def main():
     #plt.show()
 
 
-        # Short memory regime
+    # Short memory regime
     phi_error_spread(
         regime_name="short",
         rho_low=0.75, rho_high=0.80,
@@ -537,7 +537,7 @@ def main():
         regime_name="long",
         rho_low=0.95, rho_high=0.98,
         trials=300, n=1500, p=10, e_scale=0.2
-)
+    )
 
 
 
