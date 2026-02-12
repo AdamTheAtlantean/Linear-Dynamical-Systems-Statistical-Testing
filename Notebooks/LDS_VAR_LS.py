@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 # 1)  -------------------------- Simulate the LDS --------------------------
 
-def simluate_LDS (n, A, C, L, rng, e_scale=0.2):
+def simulate_lds (n, A, C, L, rng, e_scale=0.2):
     """
     Simulating the system as follows:
 
@@ -150,7 +150,7 @@ def plot_variance_of_phi_error_across_lags(
                 raise RuntimeError(f"Couldn't find C,L with rho(A-LC) <= {target} after {max_tries} tries.")
 
             # simulate + fit VAR
-            x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
+            x, y, e = simulate_lds(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
             X, Y = build_var_xy(y, p=p)
             B_hat = fit_ls(Y=Y, X=X)
             Phi_list = unpack_B_to_Phi(B_hat, d_y=d_y, p=p)
@@ -251,7 +251,7 @@ def p_sensitivity_report(
                 C, L, F, rhoF = sample_CL_in_band(rho_low, rho_high)
 
                 # simulate
-                x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
+                x, y, e = simulate_lds(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
 
                 # fit VAR(p)
                 X, Y = build_var_xy(y, p=p)
@@ -336,7 +336,7 @@ def phi_error_spread(
         rhos[t] = rhoF
 
         # simulate
-        x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
+        x, y, e = simulate_lds(n=n, A=A, C=C, L=L, rng=rng, e_scale=e_scale)
 
         # fit VAR(p)
         X, Y = build_var_xy(y, p=p)
@@ -430,7 +430,7 @@ def main():
 
 
     # Simulate constrained LDS
-    x, y, e = simluate_LDS(n=n, A=A, C=C, L=L, rng=rng, e_scale=0.2)
+    x, y, e = simulate_lds(n=n, A=A, C=C, L=L, rng=rng, e_scale=0.2)
     print("x shape:", x.shape, "y shape:", y.shape)
 
 

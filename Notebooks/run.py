@@ -126,7 +126,7 @@ def main():
     plt.tight_layout()
     plt.show()
 
-    # -------------------- optional: overlay hist + KDE for sanity --------------------
+    # -------------------- overlay hist + KDE for sanity --------------------
     plt.figure(figsize=(8, 4))
     plt.hist(D_same, bins=50, density=True, alpha=0.35, label="Same LDS (hist)")
     plt.hist(D_diff, bins=50, density=True, alpha=0.35, label="Different modes (hist)")

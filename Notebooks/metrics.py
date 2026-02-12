@@ -107,7 +107,6 @@ def phi_error_spread(
 
 
 
-
 def phi_distance_between_models(Phi1, Phi2, *, squared: bool = True, average: bool = False) -> float:
     """
     Distance between two VAR(p) models via their lag matrices.
