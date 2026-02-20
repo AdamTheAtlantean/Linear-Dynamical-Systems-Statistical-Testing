@@ -26,7 +26,7 @@ def fit_var_and_get_components(y: np.ndarray, p: int):
     Sigma_hat = (U_hat.T @ U_hat) / T  # (d_y, d_y)
     QX_hat = (X.T @ X) / T             # (k_x, k_x)
 
-    # vec(B_hat): stack columns (matches standard Kronecker covariance formula)
+    # vec(B_hat)
     pi_hat = B_hat.reshape(-1, order="F")  # (k_x * d_y,)
 
     return pi_hat, Sigma_hat, QX_hat
@@ -103,7 +103,7 @@ def main():
         )
 
     # -------------------- numeric summary --------------------
-    print("===== Task 3: Empirical distance distributions (NEW metric) =====")
+    print("Task 3: Empirical distance distributions (new metric)")
     print(f"trials={trials}, n={n}, d_y={d_y}, p={p}, e_scale={e_scale}, seed={seed}")
     print(f"same_mode_band  = {same_mode_band}")
     print(f"other_mode_band = {other_mode_band}")
