@@ -155,3 +155,73 @@ def phi_distance_between_models(Phi1, Phi2, *, squared: bool = True, average: bo
 
 
 
+
+def mahalanobis_var_distance(
+    pi1_hat: np.ndarray,
+    pi2_hat: np.ndarray,
+    Sigma1_hat: np.ndarray,
+    Sigma2_hat: np.ndarray,
+    QX1_hat: np.ndarray,
+    QX2_hat: np.ndarray,
+    regularize: float = 1e-8,
+) -> float:
+    """
+    Computes the covariance-weighted (Mahalanobis-type) distance between
+    two vectorized VAR parameter estimates:
+
+        (pi1 - pi2)^T
+        [ Sigma1 ⊗ QX1^{-1} + Sigma2 ⊗ QX2^{-1} ]^{-1}
+        (pi1 - pi2)
+
+    Parameters
+    ----------
+    pi1_hat : (k,) ndarray
+        Vectorized VAR coefficients from system 1
+    pi2_hat : (k,) ndarray
+        Vectorized VAR coefficients from system 2
+
+    Sigma1_hat : (d_y, d_y) ndarray
+        Residual covariance estimate from system 1
+    Sigma2_hat : (d_y, d_y) ndarray
+        Residual covariance estimate from system 2
+
+    QX1_hat : (k_x, k_x) ndarray
+        Sample regressor covariance matrix from system 1
+    QX2_hat : (k_x, k_x) ndarray
+        Sample regressor covariance matrix from system 2
+
+    regularize : float
+        Small ridge term added for numerical stability.
+
+    Returns
+    -------
+    float
+        Mahalanobis-type squared distance.
+    """
+
+    # Difference vector
+    delta = pi1_hat - pi2_hat
+
+    # Invert QX matrices
+    QX1_inv = np.linalg.inv(QX1_hat)
+    QX2_inv = np.linalg.inv(QX2_hat)
+
+    # Asymptotic covariance components
+    cov1 = np.kron(Sigma1_hat, QX1_inv)
+    cov2 = np.kron(Sigma2_hat, QX2_inv)
+
+    # Combined covariance
+    M = cov1 + cov2
+
+    # Regularization (important in high-dim settings)
+    M += regularize * np.eye(M.shape[0])
+
+    # Invert
+    M_inv = np.linalg.inv(M)
+
+    # Quadratic form
+    distance = float(delta.T @ M_inv @ delta)
+
+    return distance
+
+
