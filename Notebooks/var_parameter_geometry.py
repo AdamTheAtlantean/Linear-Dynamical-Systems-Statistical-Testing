@@ -57,7 +57,7 @@ def main():
     D_diff = np.zeros(trials)
 
     for t in range(trials):
-        # ===== Case 1: SAME LDS model (same A,C,L; different noise) =====
+        # ----- Case 1: SAME LDS model (same A,C,L; different noise) -----
         C, L, _, _ = sample_CL_in_band(
             A=A, d_x=d_x, d_y=d_y,
             rho_low=same_mode_band[0], rho_high=same_mode_band[1],
@@ -112,7 +112,7 @@ def main():
     print(f"D_diff: mean={D_diff.mean():.6g}, std={D_diff.std(ddof=1):.6g}, median={np.median(D_diff):.6g}")
 
     # -------------------- smooth density (KDE) plot --------------------
-    use_log_x = True
+    use_log_x = False
 
     eps = 1e-12
     xmin = float(min(D_same.min(), D_diff.min()))

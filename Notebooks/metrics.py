@@ -157,71 +157,92 @@ def phi_distance_between_models(Phi1, Phi2, *, squared: bool = True, average: bo
 
 
 def mahalanobis_var_distance(
-    pi1_hat: np.ndarray,
-    pi2_hat: np.ndarray,
-    Sigma1_hat: np.ndarray,
-    Sigma2_hat: np.ndarray,
-    QX1_hat: np.ndarray,
-    QX2_hat: np.ndarray,
-    regularize: float = 1e-8,
+        pi1_hat: np.ndarray,
+        pi2_hat: np.ndarray,
+        Sigma1_hat: np.ndarray,
+        Sigma2_hat: np.ndarray,
+        QX1_hat: np.ndarray,
+        QX2_hat: np.ndarray,
+        regularize: float = 1e-8
 ) -> float:
     """
-    Computes the covariance-weighted (Mahalanobis-type) distance between
+    Computes the covariance-weighted (Mahalanobis-esque) distance between
     two vectorized VAR parameter estimates:
 
-        (pi1 - pi2)^T
-        [ Sigma1 ⊗ QX1^{-1} + Sigma2 ⊗ QX2^{-1} ]^{-1}
-        (pi1 - pi2)
+    (pi1 - pi2)^T
+    [ Sigma1 ⊗ QX1^{-1} + Sigma2 ⊗ QX2^{-1} ]^{-1}
+    (pi1 - pi2)
 
-    Parameters
-    ----------
-    pi1_hat : (k,) ndarray
-        Vectorized VAR coefficients from system 1
-    pi2_hat : (k,) ndarray
-        Vectorized VAR coefficients from system 2
-
-    Sigma1_hat : (d_y, d_y) ndarray
-        Residual covariance estimate from system 1
-    Sigma2_hat : (d_y, d_y) ndarray
-        Residual covariance estimate from system 2
-
-    QX1_hat : (k_x, k_x) ndarray
-        Sample regressor covariance matrix from system 1
-    QX2_hat : (k_x, k_x) ndarray
-        Sample regressor covariance matrix from system 2
-
-    regularize : float
-        Small ridge term added for numerical stability.
-
-    Returns
-    -------
-    float
-        Mahalanobis-type squared distance.
     """
 
-    # Difference vector
+    # Define our difference vector
     delta = pi1_hat - pi2_hat
 
-    # Invert QX matrices
+    # Invert the Q_X matrices
     QX1_inv = np.linalg.inv(QX1_hat)
     QX2_inv = np.linalg.inv(QX2_hat)
 
-    # Asymptotic covariance components
+    # Covariance components
     cov1 = np.kron(Sigma1_hat, QX1_inv)
     cov2 = np.kron(Sigma2_hat, QX2_inv)
 
-    # Combined covariance
+    # Combine to give us our matrix 'M'
     M = cov1 + cov2
 
-    # Regularization (important in high-dim settings)
+    # Regularization (important for high dimensional settings?)
     M += regularize * np.eye(M.shape[0])
 
     # Invert
     M_inv = np.linalg.inv(M)
 
-    # Quadratic form
-    distance = float(delta.T @ M_inv @ delta)
+    # Compute distance
+    distance  = float(delta.T @ M_inv @ delta)
 
     return distance
 
+
+def mahalanobis_lag_contributions_from_B(
+    B1_hat,
+    B2_hat,
+    Sigma1_hat,
+    Sigma2_hat,
+    QX1_hat,
+    QX2_hat,
+    d_y,
+    p,
+    regularize=1e-8,
+):
+    """
+    Compute lag-wise covariance-weighted contributions
+    using correct block extraction from B_hat.
+    """
+
+    QX1_inv = np.linalg.inv(QX1_hat)
+    QX2_inv = np.linalg.inv(QX2_hat)
+
+    M = np.kron(Sigma1_hat, QX1_inv) + np.kron(Sigma2_hat, QX2_inv)
+    M += regularize * np.eye(M.shape[0])
+
+    contribs = np.zeros(p)
+
+    for i in range(p):
+
+        # Extract lag block rows
+        rows = slice(i * d_y, (i + 1) * d_y)
+
+        # B block (shape d_y × d_y after transpose)
+        Phi1_i = B1_hat[rows, :].T
+        Phi2_i = B2_hat[rows, :].T
+
+        delta_i = (Phi1_i - Phi2_i).reshape(-1, order="F")
+
+        # Compute correct index range inside full vector
+        full_start = i * d_y * d_y
+        full_end = (i + 1) * d_y * d_y
+
+        M_ii = M[full_start:full_end, full_start:full_end]
+
+        contribs[i] = float(delta_i.T @ np.linalg.solve(M_ii, delta_i))
+
+    return contribs
 
