@@ -1,0 +1,287 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
+
+from lds import simulate_lds
+from var_model import build_var_xy, fit_ls, unpack_B_to_Phi
+from metrics import mahalanobis_var_distance
+
+
+# Helpers: sampling new realizations of A, C (and L)
+
+def sample_stable_A(d_x: int, rho_min: float, rho_max: float, rng: np.random.Generator) -> np.ndarray:
+    """Sample A and rescale so its spectral radius lies in [rho_min, rho_max]."""
+    A_raw = rng.normal(size=(d_x, d_x))
+    rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
+    rho_target = rng.uniform(rho_min, rho_max)
+    return (rho_target / rho_raw) * A_raw
+
+
+def sample_C(d_y: int, d_x: int, rng: np.random.Generator) -> np.ndarray:
+    """Sample observation matrix C ∈ R^{d_y x d_x}."""
+    return rng.normal(size=(d_y, d_x))
+
+
+def sample_L(d_x: int, d_y: int, rng: np.random.Generator) -> np.ndarray:
+    """Sample noise injection matrix L ∈ R^{d_x x d_y}."""
+    return rng.normal(size=(d_x, d_y))
+
+
+def simulate_y_only(n: int, A: np.ndarray, C: np.ndarray, L: np.ndarray,
+                    rng: np.random.Generator, e_scale: float) -> np.ndarray:
+    """
+    Robustly extract y from simulate_lds return.
+    simulate_lds returns a tuple (x, y, e), so y is index 1.
+    """
+    out = simulate_lds(n, A, C, L, rng, e_scale)
+    return out[1] if isinstance(out, tuple) else out
+
+
+
+# Fit VAR(p) and return everything needed for Mahalanobis metric
+def fit_var_and_components(y: np.ndarray, p: int):
+    """
+    Fit VAR(p) by LS and return:
+      - pi_hat     : vec(Phi_1,...,Phi_p) (Fortran order)
+      - Sigma_hat  : (U^T U)/T residual covariance
+      - QX_hat     : (X^T X)/T regressor covariance
+    """
+    X, Y = build_var_xy(y, p=p)     # X: (T, d_y*p), Y: (T, d_y)
+    B_hat = fit_ls(Y, X)            # B_hat: (d_y*p, d_y)
+
+    T = X.shape[0]
+    U_hat = Y - X @ B_hat
+
+    Sigma_hat = (U_hat.T @ U_hat) / T
+    QX_hat = (X.T @ X) / T
+
+    d_y = Y.shape[1]
+    Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y)  # list of p matrices (d_y, d_y)
+
+    pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list])
+    return pi_hat, Sigma_hat, QX_hat
+
+
+def euclidean_distance(pi1: np.ndarray, pi2: np.ndarray) -> float:
+    """Unnormalized baseline: ||pi1 - pi2||_2^2."""
+    d = pi1 - pi2
+    return float(d @ d)
+
+
+
+
+# Main experiment: realization sensitivity
+
+
+def run_realization_sensitivity(
+    regime_name: str,
+    rho_min: float,
+    rho_max: float,
+    realizations: int = 5,
+    trials: int = 40,
+    n: int = 1500,
+    p: int = 10,
+    d_x: int = 5,
+    d_y: int = 5,
+    e_scale: float = 0.2,
+    seed: int = 0,
+    diff_regime: tuple[float, float] | None = None,  
+):
+    """
+    Outer loop over A,C realizations (fixed per realization).
+    Inner loop over Monte Carlo trials (different noise seeds).
+    Returns:
+      all_same_M, all_diff_M, all_same_E, all_diff_E
+    each as list-of-lists: one list per realization.
+    """
+    rng = np.random.default_rng()
+
+    # Mahalanobis
+    all_same_M, all_diff_M = [], []
+    # Euclidean
+    all_same_E, all_diff_E = [], []
+
+    print(f"\n--- Regime: {regime_name}  rho in [{rho_min}, {rho_max}] ---\n")
+
+    for r in range(realizations):
+        print(f"Realization {r+1}/{realizations}")
+
+        # Fix ONE system for this realization
+        A = sample_stable_A(d_x, rho_min, rho_max, rng)
+        C = sample_C(d_y, d_x, rng)
+        L = sample_L(d_x, d_y, rng)
+
+        D_same_M, D_diff_M = [], []
+        D_same_E, D_diff_E = [], []
+
+        for _ in range(trials):
+
+            # ----- SAME LDS -----
+            y1 = simulate_y_only(n, A, C, L, rng, e_scale)
+            y2 = simulate_y_only(n, A, C, L, rng, e_scale)
+
+            pi1, Sigma1, QX1 = fit_var_and_components(y1, p)
+            pi2, Sigma2, QX2 = fit_var_and_components(y2, p)
+
+            D_same_M.append(
+                mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2)
+            )
+            D_same_E.append(euclidean_distance(pi1, pi2))
+
+            # ----- DIFFERENT LDS -----
+            if diff_regime is None:
+                rho_min2, rho_max2 = rho_min, rho_max          # different realization, same regime
+            else:
+                rho_min2, rho_max2 = diff_regime               # different realization, different regime
+
+            A2 = sample_stable_A(d_x, rho_min2, rho_max2, rng)
+            C2 = sample_C(d_y, d_x, rng)
+            L2 = sample_L(d_x, d_y, rng)
+
+            y3 = simulate_y_only(n, A2, C2, L2, rng, e_scale)
+            pi3, Sigma3, QX3 = fit_var_and_components(y3, p)
+
+            D_diff_M.append(
+                mahalanobis_var_distance(pi1, pi3, Sigma1, Sigma3, QX1, QX3)
+            )
+            D_diff_E.append(euclidean_distance(pi1, pi3))
+
+        print("  Mahalanobis same mean:", float(np.mean(D_same_M)))
+        print("  Mahalanobis diff mean:", float(np.mean(D_diff_M)))
+        print("  Euclidean same mean:", float(np.mean(D_same_E)))
+        print("  Euclidean diff mean:", float(np.mean(D_diff_E)))
+        print()
+
+        all_same_M.append(D_same_M)
+        all_diff_M.append(D_diff_M)
+        all_same_E.append(D_same_E)
+        all_diff_E.append(D_diff_E)
+
+    return all_same_M, all_diff_M, all_same_E, all_diff_E
+
+
+# KDE plotting
+
+def _kde_fallback(xs: np.ndarray, dist: np.ndarray) -> np.ndarray:
+    dist = np.asarray(dist)
+    n = dist.size
+    std = np.std(dist, ddof=1) + 1e-12
+    h = 1.06 * std * n ** (-1/5)  # Silverman rule
+    # ys(x) = mean_i N(x | dist_i, h^2)
+    ys = np.mean(np.exp(-0.5 * ((xs[:, None] - dist[None, :]) / h) ** 2), axis=1) / (h * np.sqrt(2*np.pi))
+    return ys
+
+
+def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=None, xlim=None):
+    """
+    Plot one KDE per realization (overlay).
+    distributions: list of 1D arrays/lists (one per realization)
+    """
+    plt.figure(figsize=(8, 5))
+
+    all_vals = np.concatenate([np.asarray(d) for d in distributions])
+    xmin, xmax = np.min(all_vals), np.max(all_vals)
+    pad = 0.05 * (xmax - xmin + 1e-12)
+
+    if xlim is None:
+        xs = np.linspace(xmin - pad, xmax + pad, gridsize)
+    else:
+        xs = np.linspace(xlim[0], xlim[1], gridsize)
+
+    for i, dist in enumerate(distributions):
+        dist = np.asarray(dist)
+
+        
+        ys = gaussian_kde(dist, bw_method=bw_method)(xs)
+        
+
+        plt.plot(xs, ys, alpha=0.75, label=f"Realization {i+1}")
+
+    plt.title(title)
+    plt.xlabel("Distance")
+    plt.ylabel("Estimated density")
+    plt.legend()
+    plt.show()
+
+
+def plot_kde_same_vs_diff(same_dists, diff_dists, title: str, gridsize: int = 500, bw_method=None, xlim=None):
+    """
+    Plot pooled SAME vs pooled DIFFERENT KDE (one curve each).
+    same_dists, diff_dists: list-of-lists (one list per realization)
+    """
+    plt.figure(figsize=(8, 5))
+
+    same = np.concatenate([np.asarray(d) for d in same_dists])
+    diff = np.concatenate([np.asarray(d) for d in diff_dists])
+
+    all_vals = np.concatenate([same, diff])
+    xmin, xmax = np.min(all_vals), np.max(all_vals)
+    pad = 0.05 * (xmax - xmin + 1e-12)
+
+    if xlim is None:
+        xs = np.linspace(xmin - pad, xmax + pad, gridsize)
+    else:
+        xs = np.linspace(xlim[0], xlim[1], gridsize)
+
+
+    ys_same = gaussian_kde(same, bw_method=bw_method)(xs)
+    ys_diff = gaussian_kde(diff, bw_method=bw_method)(xs)
+
+
+    plt.plot(xs, ys_same, alpha=0.85, label="SAME (pooled)")
+    plt.plot(xs, ys_diff, alpha=0.85, label="DIFFERENT (pooled)")
+
+    plt.title(title)
+    plt.xlabel("Distance")
+    plt.ylabel("Estimated density")
+    plt.legend()
+    plt.show()
+
+
+
+# Run
+
+if __name__ == "__main__":
+
+    # Within-regime "different" (short regime)
+    same_M, diff_M, same_E, diff_E = run_realization_sensitivity(
+        regime_name="short (within-regime diff)",
+        rho_min=0.75,
+        rho_max=0.80,
+        realizations=4,
+        trials=40,
+        n=1500,
+        p=10,
+        d_x=5,
+        d_y=5,
+        e_scale=0.2,
+        seed=0,
+        diff_regime=None
+    )
+
+    # KDE overlays across realizations
+    plot_kde_overlay(same_M, "Mahalanobis SAME KDE across realizations (short)", bw_method="silverman")
+    plot_kde_overlay(diff_M, "Mahalanobis DIFFERENT KDE across realizations (short, within-regime)", bw_method="silverman")
+
+    # Pooled SAME vs DIFFERENT KDE (most readable)
+    plot_kde_same_vs_diff(same_M, diff_M, "Mahalanobis KDE: SAME vs DIFFERENT (short, pooled)", bw_method="silverman")
+
+    # Also visualize Euclidean baseline
+    plot_kde_same_vs_diff(same_E, diff_E, "Euclidean KDE: SAME vs DIFFERENT (short, pooled)", bw_method="silverman")
+
+    # DIFFERENT regime (short vs long):
+    # same_M2, diff_M2, _, _ = run_realization_sensitivity(
+    #    regime_name="short vs long",
+    #    rho_min=0.75,
+    #    rho_max=0.80,
+    #    realizations=4,
+    #    trials=40,
+    #    n=1500,
+    #    p=10,
+    #    d_x=5,
+    #    d_y=5,
+    #   e_scale=0.2,
+    #   seed=0,
+    #   diff_regime=(0.95, 0.98)
+    #)
+    #plot_kde_same_vs_diff(same_M2, diff_M2, "Mahalanobis KDE: SAME vs DIFFERENT (short vs long, pooled)", bw_method="silverman")

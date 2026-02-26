@@ -59,7 +59,7 @@ def main():
     D_diff = np.zeros(trials)
 
     for t in range(trials):
-        # ===== Case 1: SAME LDS =====
+        # ----- Case 1: SAME LDS -----
         C, L, _, _ = sample_CL_in_band(
             A=A, d_x=d_x, d_y=d_y,
             rho_low=same_mode_band[0], rho_high=same_mode_band[1],
@@ -87,7 +87,7 @@ def main():
             regularize=1e-8
         )
 
-        # ===== Case 2: DIFFERENT LDS MODES =====
+        # ----- Case 2: DIFFERENT LDS MODES -----
         C_a, L_a, _, _ = sample_CL_in_band(
             A=A, d_x=d_x, d_y=d_y,
             rho_low=same_mode_band[0], rho_high=same_mode_band[1],
@@ -134,7 +134,7 @@ def main():
     print(f"  sum contrib_same: mean={contrib_same.sum(axis=1).mean():.6g}")
     print(f"  sum contrib_diff: mean={contrib_diff.sum(axis=1).mean():.6g}")
 
-    # -------------------- box & whisker plots --------------------
+    # -------------------- box plots --------------------
     data_same = [contrib_same[:, i] for i in range(p)]
     data_diff = [contrib_diff[:, i] for i in range(p)]
 
@@ -142,6 +142,7 @@ def main():
     plt.boxplot(data_same, showfliers=False)
     plt.xlabel("Lag i")
     plt.ylabel("Lag contribution $D_i$")
+    plt.ylim(0,375)
     plt.title("Same LDS: lag-wise covariance-weighted contributions (blockwise)")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -151,12 +152,13 @@ def main():
     plt.boxplot(data_diff, showfliers=False)
     plt.xlabel("Lag i")
     plt.ylabel("Lag contribution $D_i$")
+    plt.ylim(0,375)
     plt.title("Different modes: lag-wise covariance-weighted contributions (blockwise)")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
 
-    # -------------------- optional: median curves --------------------
+    # -------------------- median curves --------------------
     med_same = np.median(contrib_same, axis=0)
     med_diff = np.median(contrib_diff, axis=0)
 

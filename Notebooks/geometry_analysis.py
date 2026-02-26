@@ -112,7 +112,7 @@ def main():
     print(f"D_diff: mean={D_diff.mean():.6g}, std={D_diff.std(ddof=1):.6g}, median={np.median(D_diff):.6g}")
 
     # -------------------- smooth density (KDE) plot --------------------
-    use_log_x = False
+    use_log_x = True
 
     eps = 1e-12
     xmin = float(min(D_same.min(), D_diff.min()))
