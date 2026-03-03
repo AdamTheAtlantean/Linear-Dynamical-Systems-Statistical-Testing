@@ -165,6 +165,8 @@ def run_realization_sensitivity(
         D_same_M, D_diff_M = [], []
         D_same_E, D_diff_E = [], []
 
+        cond_QX_list = []
+
         for _ in range(trials):
             # ----- SAME LDS -----
             y1 = simulate_y_only(n, A, C, L, rng, e_scale)
@@ -172,6 +174,9 @@ def run_realization_sensitivity(
 
             pi1, Sigma1, QX1 = fit_var_and_components(y1, p)
             pi2, Sigma2, QX2 = fit_var_and_components(y2, p)
+
+            cond_QX_list.append(np.linalg.cond(QX1))
+            cond_QX_list.append(np.linalg.cond(QX2))
 
             D_same_M.append(
                 mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2)
@@ -198,9 +203,22 @@ def run_realization_sensitivity(
 
         # Print realization summary
         print("  Mahalanobis same mean:", float(np.mean(D_same_M)))
+        print("  Mahalanobis same std:", float(np.std(D_same_M, ddof=1)))
         print("  Mahalanobis diff mean:", float(np.mean(D_diff_M)))
-        print("  Euclidean same mean:", float(np.mean(D_same_E)))
-        print("  Euclidean diff mean:", float(np.mean(D_diff_E)))
+        print("  Mahalanobis diff std:", float(np.std(D_diff_M, ddof=1)))
+        #print("  Euclidean same mean:", float(np.mean(D_same_E)))
+        #print("  Euclidean diff mean:", float(np.mean(D_diff_E)))
+        #print("  Euclidean same std:", float(np.std(D_same_E)))
+        #print("  Euclidean diff std:", float(np.std(D_diff_E)))
+        cond_arr = np.array(cond_QX_list)
+        print("  QX condition number (median):", np.median(cond_arr))
+        print("  QX condition number (max):", np.max(cond_arr))
+        same = np.asarray(D_same_M)
+        diff = np.asarray(D_diff_M)
+
+        print("  SAME q50/q90/q99:", np.quantile(same, [0.5, 0.9, 0.99]))
+        print("  DIFF q50/q90/q99:", np.quantile(diff, [0.5, 0.9, 0.99]))
+        print("  Pr(DIFF > SAME):", float(np.mean(diff > same))) 
         print()
 
         all_same_M.append(D_same_M)
@@ -271,14 +289,15 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
         return
 
     all_vals = np.concatenate(dists)
-    xmin, xmax = float(np.min(all_vals)), float(np.max(all_vals))
-    pad = 0.05 * (xmax - xmin + 1e-12)
 
     if xlim is None:
-        xs = np.linspace(xmin - pad, xmax + pad, gridsize)
+        lo, hi = np.quantile(all_vals, [0.001, 0.999])
+        xs = np.linspace(lo, hi, gridsize)
+        plt.xlim(lo, hi)
     else:
         xs = np.linspace(xlim[0], xlim[1], gridsize)
-
+        plt.xlim(xlim[0], xlim[1])
+        
     for i, dist in enumerate(distributions):
         dist = np.asarray(dist)
         if dist.size < 2 or np.std(dist) == 0:
@@ -297,7 +316,7 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
     plt.ylabel("Estimated density")
     if xlim is not None:
         plt.xlim(xlim[0], xlim[1])
-    plt.legend()
+    #plt.legend()
     plt.show()
 
 
@@ -316,13 +335,14 @@ def plot_kde_same_vs_diff(same_dists, diff_dists, title: str, gridsize: int = 50
         return
 
     all_vals = np.concatenate([same, diff])
-    xmin, xmax = float(np.min(all_vals)), float(np.max(all_vals))
-    pad = 0.05 * (xmax - xmin + 1e-12)
 
     if xlim is None:
-        xs = np.linspace(xmin - pad, xmax + pad, gridsize)
+        lo, hi = np.quantile(all_vals, [0.001, 0.999])
+        xs = np.linspace(lo, hi, gridsize)
+        plt.xlim(lo, hi)
     else:
         xs = np.linspace(xlim[0], xlim[1], gridsize)
+        plt.xlim(xlim[0], xlim[1])
 
     try:
         ys_same = gaussian_kde(same, bw_method=bw_method)(xs)
@@ -354,7 +374,7 @@ if __name__ == "__main__":
         regime_name="short (within-regime diff)",
         rho_min=0.75,
         rho_max=0.80,
-        realizations=10,
+        realizations=25,
         trials=40,
         n=1500,
         p=10,
@@ -369,7 +389,7 @@ if __name__ == "__main__":
     # --- impulse-response variability plot ---
     if len(ir_dists) > 0:
         plt.figure()
-        plt.hist(ir_dists, bins=60)
+        plt.hist(ir_dists, bins=15)
         plt.title("Pairwise impulse-response distances across realizations")
         plt.xlabel("D_H")
         plt.ylabel("count")
@@ -402,3 +422,6 @@ if __name__ == "__main__":
     #     K_ir=25,
     # )
     # plot_kde_same_vs_diff(same_M2, diff_M2, "Mahalanobis KDE: SAME vs DIFFERENT (short vs long, pooled)", bw_method="silverman")
+
+
+    

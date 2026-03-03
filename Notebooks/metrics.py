@@ -193,7 +193,8 @@ def mahalanobis_var_distance(
     M += regularize * np.eye(M.shape[0])
 
     # Invert
-    M_inv = np.linalg.inv(M)
+    ridge = 1e-6 * np.trace(M) / M.shape[0]
+    M_inv = np.linalg.inv(M + ridge * np.eye(M.shape[0]))
 
     # Compute distance
     distance  = float(delta.T @ M_inv @ delta)
