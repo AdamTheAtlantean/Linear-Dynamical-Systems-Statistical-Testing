@@ -112,6 +112,40 @@ def euclidean_distance(pi1: np.ndarray, pi2: np.ndarray) -> float:
     d = pi1 - pi2
     return float(d @ d)
 
+def plot_kde_per_realization(same_list, diff_list):
+    """
+    same_list: list of arrays
+        Mahalanobis distances for DIFF comparisons per realization
+    diff_list: list f arrays
+        Mahalanobis distances for DIFF comparisons realization 
+    """
+
+    n_realizations = len(same_list)
+
+    for i in range(n_realizations):
+        same_vals = np.asarray(same_list[i])
+        diff_vals = np.asarray(diff_list[i])
+
+        kde_same = gaussian_kde(same_vals)
+        kde_diff = gaussian_kde(diff_vals)
+
+        xmin = min(same_vals.min(), diff_vals.min())
+        xmax = max(same_vals.max(), diff_vals.max())
+
+        x = np.linspace(xmin, xmax, 500)
+        plt.figure(figsize=(6,4))
+
+        plt.plot(x, kde_same(x), label="Same KDE", linewidth=2)
+        plt.plot(x, kde_diff(x), label="Different KDE", linewidth=2)
+
+        plt.title(f"KDE Comparison - Realization{i+1}")
+        plt.xlabel("Mahal. Distance")
+        plt.ylabel("Probability Density")
+        plt.legend()
+        plt.grid(alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()
 
 # Main experiment: realization sensitivity
 def run_realization_sensitivity(
@@ -366,6 +400,64 @@ def plot_kde_same_vs_diff(same_dists, diff_dists, title: str, gridsize: int = 50
     plt.show()
 
 
+def ir_profile_for_realization(
+    systems,
+    idx: int,
+    K_ir: int = 25,
+    normalize: bool = True,
+    top_k: int = 5,
+):
+    """
+    idx is 0-based (so idx=19 corresponds to Realization 20).
+    Returns:
+      dists: array of length R-1 (distances to all other realizations)
+      summary dict, and prints nearest neighbors.
+    """
+    R = len(systems)
+    if not (0 <= idx < R):
+        raise ValueError(f"idx must be in [0, {R-1}]")
+
+    A1, C1, L1 = systems[idx]
+
+    dists = []
+    js = []
+    for j in range(R):
+        if j == idx:
+            continue
+        A2, C2, L2 = systems[j]
+        d = impulse_response_distance(A1, C1, L1, A2, C2, L2, K=K_ir, normalize=normalize)
+        dists.append(d)
+        js.append(j)
+
+    dists = np.asarray(dists, dtype=float)
+    js = np.asarray(js, dtype=int)
+
+    order = np.argsort(dists)
+
+    summary = {
+        "realization": idx + 1,
+        "mean": float(np.mean(dists)),
+        "median": float(np.median(dists)),
+        "min": float(np.min(dists)),
+        "max": float(np.max(dists)),
+        "nearest_neighbor": int(js[order[0]] + 1),
+        "nearest_neighbor_dist": float(dists[order[0]]),
+    }
+
+    print(f"\nIR profile for Realization {idx+1} (K={K_ir}, normalize={normalize})")
+    print(f"  mean={summary['mean']:.6g}, median={summary['median']:.6g}, "
+          f"min={summary['min']:.6g}, max={summary['max']:.6g}")
+    print(f"  nearest neighbor: Realization {summary['nearest_neighbor']} "
+          f"with D_H={summary['nearest_neighbor_dist']:.6g}")
+
+    print(f"  {top_k} closest realizations:")
+    for k in range(min(top_k, len(order))):
+        j = js[order[k]]
+        print(f"    -> Realization {j+1}: D_H = {dists[order[k]]:.6g}")
+
+    return dists, summary
+
+
 # Run
 if __name__ == "__main__":
 
@@ -386,6 +478,16 @@ if __name__ == "__main__":
         K_ir=25,
     )
 
+        # --- IR “metrics” for specific realizations (20, 23, 25) ---
+    for r in range(1, len(systems) + 1):
+        ir_profile_for_realization(
+            systems,
+            idx=r-1,          # convert to 0-based index
+            K_ir=25,
+            normalize=True,
+            top_k=5,
+        )
+
     # --- impulse-response variability plot ---
     if len(ir_dists) > 0:
         plt.figure()
@@ -399,11 +501,15 @@ if __name__ == "__main__":
     plot_kde_overlay(same_M, "Mahalanobis SAME KDE across realizations (short)", bw_method="silverman")
     plot_kde_overlay(diff_M, "Mahalanobis DIFFERENT KDE across realizations (short, within-regime)", bw_method="silverman")
 
-    # Pooled SAME vs DIFFERENT KDE (most readable)
+    # Pooled SAME vs DIFFERENT KDE 
     plot_kde_same_vs_diff(same_M, diff_M, "Mahalanobis KDE: SAME vs DIFFERENT (short, pooled)", bw_method="silverman")
+
+    # --- per-realization Same vs Different KDE comparison ---
+    plot_kde_per_realization(same_M, diff_M)
 
     # Also visualize Euclidean baseline
     plot_kde_same_vs_diff(same_E, diff_E, "Euclidean KDE: SAME vs DIFFERENT (short, pooled)", bw_method="silverman")
+
 
     # DIFFERENT regime example (short vs long):
     # same_M2, diff_M2, _, _, ir2, _ = run_realization_sensitivity(
@@ -422,6 +528,7 @@ if __name__ == "__main__":
     #     K_ir=25,
     # )
     # plot_kde_same_vs_diff(same_M2, diff_M2, "Mahalanobis KDE: SAME vs DIFFERENT (short vs long, pooled)", bw_method="silverman")
+
 
 
     
