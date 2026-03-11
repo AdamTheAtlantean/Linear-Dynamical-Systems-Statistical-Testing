@@ -138,7 +138,7 @@ def plot_kde_per_realization(same_list, diff_list):
         plt.plot(x, kde_same(x), label="Same KDE", linewidth=2)
         plt.plot(x, kde_diff(x), label="Different KDE", linewidth=2)
 
-        plt.title(f"KDE Comparison - Realization{i+1}")
+        plt.title(f" Probability Distribution Comparison: Realization{i+1}")
         plt.xlabel("Mahal. Distance")
         plt.ylabel("Probability Density")
         plt.legend()
@@ -189,7 +189,7 @@ def run_realization_sensitivity(
     for r in range(realizations):
         print(f"Realization {r+1}/{realizations}")
 
-        # Fix ONE system for this realization
+        # Fix a system for this realization
         A = sample_stable_A(d_x, rho_min, rho_max, rng)
         C = sample_C(d_y, d_x, rng)
         L = sample_L(d_x, d_y, rng)
