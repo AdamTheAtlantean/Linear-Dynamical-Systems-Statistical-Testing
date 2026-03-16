@@ -16,6 +16,22 @@ def sample_stable_A(d_x: int, rho_min: float, rho_max: float, rng: np.random.Gen
     rho_target = rng.uniform(rho_min, rho_max)
     return (rho_target / (rho_raw + 1e-12)) * A_raw
 
+def sample_stable_A_identity_centered(
+    d_x: int,
+    rho_min: float,
+    rho_max: float,
+    rng: np.random.Generator
+) -> np.ndarray:
+    """
+    Sample A around the identity matrix:
+        A_raw = I + Z,  Z_ij ~ N(0,1)
+    then rescale so its spectral radius lies in [rho_min, rho_max].
+    """
+    A_raw = 10 + rng.normal(size=(d_x, d_x))
+    rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
+    rho_target = rng.uniform(rho_min, rho_max)
+    return (rho_target / (rho_raw + 1e-12)) * A_raw
+
 
 def sample_C(d_y: int, d_x: int, rng: np.random.Generator) -> np.ndarray:
     """Sample observation matrix C ∈ R^{d_y x d_x}."""
@@ -223,7 +239,7 @@ def run_realization_sensitivity(
             else:
                 rho_min2, rho_max2 = diff_regime        # different realization, different regime
 
-            A2 = sample_stable_A(d_x, rho_min2, rho_max2, rng)
+            A2 = sample_stable_A_identity_centered(d_x, rho_min2, rho_max2, rng)
             C2 = sample_C(d_y, d_x, rng)
             L2 = sample_L(d_x, d_y, rng)
 
@@ -399,6 +415,8 @@ def plot_kde_same_vs_diff(same_dists, diff_dists, title: str, gridsize: int = 50
     plt.legend()
     plt.show()
 
+    print("-" *10, len(same_dists))
+
 
 def ir_profile_for_realization(
     systems,
@@ -455,6 +473,8 @@ def ir_profile_for_realization(
         j = js[order[k]]
         print(f"    -> Realization {j+1}: D_H = {dists[order[k]]:.6g}")
 
+
+
     return dists, summary
 
 
@@ -510,25 +530,3 @@ if __name__ == "__main__":
     # Also visualize Euclidean baseline
     plot_kde_same_vs_diff(same_E, diff_E, "Euclidean KDE: SAME vs DIFFERENT (short, pooled)", bw_method="silverman")
 
-
-    # DIFFERENT regime example (short vs long):
-    # same_M2, diff_M2, _, _, ir2, _ = run_realization_sensitivity(
-    #     regime_name="short vs long",
-    #     rho_min=0.75,
-    #     rho_max=0.80,
-    #     realizations=4,
-    #     trials=40,
-    #     n=1500,
-    #     p=10,
-    #     d_x=5,
-    #     d_y=5,
-    #     e_scale=0.2,
-    #     seed=0,
-    #     diff_regime=(0.95, 0.98),
-    #     K_ir=25,
-    # )
-    # plot_kde_same_vs_diff(same_M2, diff_M2, "Mahalanobis KDE: SAME vs DIFFERENT (short vs long, pooled)", bw_method="silverman")
-
-
-
-    

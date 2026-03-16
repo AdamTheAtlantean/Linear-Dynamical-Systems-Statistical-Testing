@@ -157,49 +157,30 @@ def phi_distance_between_models(Phi1, Phi2, *, squared: bool = True, average: bo
 
 
 def mahalanobis_var_distance(
-        pi1_hat: np.ndarray,
-        pi2_hat: np.ndarray,
-        Sigma1_hat: np.ndarray,
-        Sigma2_hat: np.ndarray,
-        QX1_hat: np.ndarray,
-        QX2_hat: np.ndarray,
-        regularize: float = 1e-8
+    pi1_hat: np.ndarray,
+    pi2_hat: np.ndarray,
+    Sigma1_hat: np.ndarray,
+    Sigma2_hat: np.ndarray,
+    QX1_hat: np.ndarray,
+    QX2_hat: np.ndarray,
+    regularize: float = 1e-6,   # now interpreted as "relative ridge"
 ) -> float:
-    """
-    Computes the covariance-weighted (Mahalanobis-esque) distance between
-    two vectorized VAR parameter estimates:
-
-    (pi1 - pi2)^T
-    [ Sigma1 ⊗ QX1^{-1} + Sigma2 ⊗ QX2^{-1} ]^{-1}
-    (pi1 - pi2)
-
-    """
-
-    # Define our difference vector
     delta = pi1_hat - pi2_hat
 
-    # Invert the Q_X matrices
-    QX1_inv = np.linalg.inv(QX1_hat)
-    QX2_inv = np.linalg.inv(QX2_hat)
+    # Light ridge on QX before inverting (prevents blow-ups)
+    eps1 = 1e-10 * np.trace(QX1_hat) / QX1_hat.shape[0]
+    eps2 = 1e-10 * np.trace(QX2_hat) / QX2_hat.shape[0]
+    QX1_inv = np.linalg.inv(QX1_hat + eps1 * np.eye(QX1_hat.shape[0]))
+    QX2_inv = np.linalg.inv(QX2_hat + eps2 * np.eye(QX2_hat.shape[0]))
 
-    # Covariance components
-    cov1 = np.kron(Sigma1_hat, QX1_inv)
-    cov2 = np.kron(Sigma2_hat, QX2_inv)
+    M = np.kron(Sigma1_hat, QX1_inv) + np.kron(Sigma2_hat, QX2_inv)
 
-    # Combine to give us our matrix 'M'
-    M = cov1 + cov2
+    # Single ridge on M (scaled)
+    ridge = regularize * np.trace(M) / M.shape[0]
+    M_reg = M + ridge * np.eye(M.shape[0])
 
-    # Regularization (important for high dimensional settings?)
-    M += regularize * np.eye(M.shape[0])
-
-    # Invert
-    ridge = 1e-6 * np.trace(M) / M.shape[0]
-    M_inv = np.linalg.inv(M + ridge * np.eye(M.shape[0]))
-
-    # Compute distance
-    distance  = float(delta.T @ M_inv @ delta)
-
-    return distance
+    # Solve instead of explicit inverse
+    return float(delta.T @ np.linalg.solve(M_reg, delta))
 
 
 def mahalanobis_lag_contributions_from_B(
