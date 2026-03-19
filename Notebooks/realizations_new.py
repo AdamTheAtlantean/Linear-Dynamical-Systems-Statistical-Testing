@@ -29,7 +29,7 @@ def sample_stable_A_identity_centered(
     rho_min: float,
     rho_max: float,
     rng: np.random.Generator,
-    eye_scalar: float = 10
+    eye_scalar: float = 1
 ) -> np.ndarray:
     """
     Sample A around a scaled identity, then rescale so its spectral radius
@@ -381,7 +381,7 @@ def run_realization_sensitivity(
         else:
             rho_min4, rho_max4 = diff_regime
 
-        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng, 20)
+        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)
         C4 = sample_C(d_y, d_x, rng)
         L4 = sample_L(d_x, d_y, rng)
 
