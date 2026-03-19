@@ -28,13 +28,15 @@ def sample_stable_A_identity_centered(
     d_x: int,
     rho_min: float,
     rho_max: float,
-    rng: np.random.Generator
+    rng: np.random.Generator,
+    eye_scalar: float = 10
 ) -> np.ndarray:
     """
     Sample A around a scaled identity, then rescale so its spectral radius
     lies in [rho_min, rho_max].
     """
-    A_raw = 10 * np.eye(d_x) + rng.normal(size=(d_x, d_x))
+    
+    A_raw = eye_scalar * np.eye(d_x) + rng.normal(size=(d_x, d_x))
     rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
     rho_target = rng.uniform(rho_min, rho_max)
     return (rho_target / (rho_raw + 1e-12)) * A_raw
@@ -128,7 +130,8 @@ def fit_var_and_components(y: np.ndarray, p: int):
     U_hat = Y - X @ B_hat
 
     Sigma_hat = (U_hat.T @ U_hat) / T
-    QX_hat = (X.T @ X) / T
+    QX_hat = (X.T @ X) / T  
+    #QX_hat = np.einsum('ti,tj->ij', X, X) / T
 
     d_y = Y.shape[1]
     Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y)
@@ -221,7 +224,7 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
     if xlim is None:
         lo, hi = np.quantile(all_vals, [0.001, 0.999])
         xs = np.linspace(lo, hi, gridsize)
-        plt.xlim(lo, hi)
+        plt.xlim(0, 10000)
     else:
         xs = np.linspace(xlim[0], xlim[1], gridsize)
         plt.xlim(xlim[0], xlim[1])
@@ -313,7 +316,7 @@ def run_realization_sensitivity(
     rho_min: float,
     rho_max: float,
     realizations: int = 5,
-    trials: int = 40,
+    trials: int = 120,
     n: int = 1500,
     p: int = 10,
     d_x: int = 5,
@@ -345,9 +348,19 @@ def run_realization_sensitivity(
 
     all_same_M, all_diff_M = [], []
 
+    
+
     print(f"\n--- Regime: {regime_name}  rho in [{rho_min}, {rho_max}] ---\n")
 
     systems: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+
+    diff_pairs: list[
+        tuple[
+            tuple[np.ndarray, np.ndarray, np.ndarray],
+            tuple[np.ndarray, np.ndarray, np.ndarray]
+
+        ]
+    ] = []
 
     for r in range(realizations):
         print(f"Realization {r+1}/{realizations}")
@@ -357,7 +370,23 @@ def run_realization_sensitivity(
         C = sample_C(d_y, d_x, rng)
         L = sample_L(d_x, d_y, rng)
 
+        # System for y3
+        A3 = sample_stable_A(d_x, rho_min, rho_max, rng)
+        C3 = sample_C(d_y, d_x, rng)
+        L3 = sample_L(d_x, d_y, rng)
+
+        # System for y4
+        if diff_regime is None:
+            rho_min4, rho_max4 = rho_min, rho_max
+        else:
+            rho_min4, rho_max4 = diff_regime
+
+        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng, 20)
+        C4 = sample_C(d_y, d_x, rng)
+        L4 = sample_L(d_x, d_y, rng)
+
         systems.append((A, C, L))
+        diff_pairs.append(((A3, C3, L3), (A4, C4, L4)))
 
         D_same_M, D_diff_M = [], []
         cond_QX_list = []
@@ -378,23 +407,7 @@ def run_realization_sensitivity(
             D_same_M.append(d_same)
 
             
-            # DIFFERENT LDS: y3 vs y4 from two independent systems
-           
-            # System for y3
-            A3 = sample_stable_A_identity_centered(d_x, rho_min, rho_max, rng)
-            C3 = sample_C(d_y, d_x, rng)
-            L3 = sample_L(d_x, d_y, rng)
-
-            # System for y4
-            if diff_regime is None:
-                rho_min4, rho_max4 = rho_min, rho_max
-            else:
-                rho_min4, rho_max4 = diff_regime
-
-            A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)
-            C4 = sample_C(d_y, d_x, rng)
-            L4 = sample_L(d_x, d_y, rng)
-
+            # DIFFERENT LDS: y3 vs y4 from two fixed but distinct and independent LDS realizations 
             y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale)
             y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale)
 
@@ -413,6 +426,14 @@ def run_realization_sensitivity(
         print("  Mahalanobis diff mean:", float(np.mean(D_diff_M)))
         print("  Mahalanobis diff std:", float(np.std(D_diff_M, ddof=1)))
 
+        d_ir_pair = impulse_response_distance(
+            A3, C3, L3,
+            A4, C4, L4,
+            K=K_ir,
+            normalize=True
+        )
+        print("  IR distance of fixed DIFF pair:", d_ir_pair)
+
         cond_arr = np.array(cond_QX_list)
         print("  QX condition number (median):", np.median(cond_arr))
         print("  QX condition number (max):", np.max(cond_arr))
@@ -423,6 +444,8 @@ def run_realization_sensitivity(
         print("  SAME q50/q90/q99:", np.quantile(same, [0.5, 0.9, 0.99]))
         print("  DIFF q50/q90/q99:", np.quantile(diff, [0.5, 0.9, 0.99]))
         print("  Pr(DIFF > SAME):", float(np.mean(diff > same)))
+        prob_cross = np.mean(diff[:, None] > same[None, :])
+        print("  Cross Prob.:", prob_cross)
         print()
 
         all_same_M.append(D_same_M)
@@ -430,7 +453,6 @@ def run_realization_sensitivity(
 
     
     # Pairwise IR distances across fixed outer-loop realizations
-    
     ir_dists: list[float] = []
 
     for i in range(len(systems)):
@@ -452,21 +474,41 @@ def run_realization_sensitivity(
             f"min={np.min(ir_arr):.4g}, max={np.max(ir_arr):.4g}"
         )
 
-    return all_same_M, all_diff_M, ir_dists, systems
+    diff_ir_dists: list[float] = []
 
+    for r in range(len(diff_pairs)):
+        (A3, C3, L3), (A4, C4, L4) = diff_pairs[r]
+        d_ir_diff = impulse_response_distance(
+            A3, C3, L3,
+            A4, C4, L4,
+            K=K_ir,
+            normalize=True
+        )
+        diff_ir_dists.append(d_ir_diff)
+
+    if len(diff_ir_dists) == 0:
+        print(f"IR distance within DIFF pairs (K={K_ir}): none")
+    else:
+        diff_ir_arr = np.asarray(diff_ir_dists)
+        std = np.std(diff_ir_arr, ddof=1) if diff_ir_arr.size >= 2 else 0.0
+        print(
+            f"IR distance within DIFF pairs (K={K_ir}): "
+            f"mean={np.mean(diff_ir_arr):.4g}, std={std:.4g}, "
+            f"min={np.min(diff_ir_arr):.4g}, max={np.max(diff_ir_arr):.4g}"
+        )
+        
+    return all_same_M, all_diff_M, ir_dists, diff_ir_dists, systems, diff_pairs
 
 
 # Run
-
-
 if __name__ == "__main__":
 
-    same_M, diff_M, ir_dists, systems = run_realization_sensitivity(
+    same_M, diff_M, ir_dists, diff_ir_dists, systems, diff_pairs = run_realization_sensitivity(
         regime_name="short (within-regime diff)",
         rho_min=0.75,
-        rho_max=0.80,
+        rho_max=0.85,
         realizations=25,
-        trials=100,
+        trials=40,
         n=1500,
         p=10,
         d_x=5,
@@ -484,7 +526,7 @@ if __name__ == "__main__":
             idx=r - 1,
             K_ir=25,
             normalize=True,
-            top_k=5,
+            top_k=3,
         )
 
     # Histogram of pairwise IR distances

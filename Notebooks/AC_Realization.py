@@ -27,7 +27,7 @@ def sample_stable_A_identity_centered(
         A_raw = I + Z,  Z_ij ~ N(0,1)
     then rescale so its spectral radius lies in [rho_min, rho_max].
     """
-    A_raw = 10 + rng.normal(size=(d_x, d_x))
+    A_raw = 10 * np.eye(d_x) + rng.normal(size=(d_x, d_x))
     rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
     rho_target = rng.uniform(rho_min, rho_max)
     return (rho_target / (rho_raw + 1e-12)) * A_raw
@@ -77,7 +77,6 @@ def impulse_response_distance(A1, C1, L1, A2, C2, L2, K: int = 25, normalize: bo
     return num / (den + 1e-12) if normalize else num
 
 
-
 # Simulation wrapper
 def simulate_y_only(
     n: int,
@@ -93,7 +92,6 @@ def simulate_y_only(
     """
     out = simulate_lds(n, A, C, L, rng, e_scale)
     return out[1] if isinstance(out, tuple) else out
-
 
 
 # Fit VAR(p) and return everything needed for Mahalanobis metric
@@ -415,7 +413,7 @@ def plot_kde_same_vs_diff(same_dists, diff_dists, title: str, gridsize: int = 50
     plt.legend()
     plt.show()
 
-    print("-" *10, len(same_dists))
+    print("---------------------------------", len(same_dists))
 
 
 def ir_profile_for_realization(
@@ -487,7 +485,7 @@ if __name__ == "__main__":
         rho_min=0.75,
         rho_max=0.80,
         realizations=25,
-        trials=40,
+        trials=10,
         n=1500,
         p=10,
         d_x=5,

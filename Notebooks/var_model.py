@@ -13,9 +13,9 @@ def build_var_xy(y, p):
     
 
     # Build the target matrix
-    Y = y[p:]
+    Y = y[p:]  # shape 
     # Allocate design matrix
-    X = np.zeros((n - p, p * d_y))
+    X = np.zeros((n - p, p * d_y))  # shape (n - p, p * d_y)
 
 
     for i in range(1, p + 1):

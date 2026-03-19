@@ -167,11 +167,11 @@ def mahalanobis_var_distance(
 ) -> float:
     delta = pi1_hat - pi2_hat
 
-    # Light ridge on QX before inverting (prevents blow-ups)
-    eps1 = 1e-10 * np.trace(QX1_hat) / QX1_hat.shape[0]
-    eps2 = 1e-10 * np.trace(QX2_hat) / QX2_hat.shape[0]
-    QX1_inv = np.linalg.inv(QX1_hat + eps1 * np.eye(QX1_hat.shape[0]))
-    QX2_inv = np.linalg.inv(QX2_hat + eps2 * np.eye(QX2_hat.shape[0]))
+    # Light ridge on QX before inverting (prevents blow ups)
+    #eps1 = 1e-10 * np.trace(QX1_hat) / QX1_hat.shape[0]
+    #eps2 = 1e-10 * np.trace(QX2_hat) / QX2_hat.shape[0]
+    QX1_inv = np.linalg.inv(QX1_hat)
+    QX2_inv = np.linalg.inv(QX2_hat)
 
     M = np.kron(Sigma1_hat, QX1_inv) + np.kron(Sigma2_hat, QX2_inv)
 
