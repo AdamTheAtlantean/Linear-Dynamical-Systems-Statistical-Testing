@@ -7,6 +7,11 @@ from var_model import build_var_xy, fit_ls, unpack_B_to_Phi
 from metrics import mahalanobis_var_distance
 
 
+"""
+Global dimension convensions:
+"""
+
+
 
 # Helpers: sampling new realizations of A, C, and L
 def sample_stable_A(
