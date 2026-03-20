@@ -9,9 +9,23 @@ from metrics import mahalanobis_var_distance
 
 """
 Global dimension convensions:
+
+1. n      = length of the observed time series
+2. T      = effictive VAR sample size, i.e., n - p
+3. d_x    = latent state dimension
+4. d_y    = observation dimension
+5. p      = VAR order
+
+LDS objects:                   |   VAR(p) objects:                              |  IR response objects:
+                               |   1. X          ∈ R^{T, (p * d_y)}             |  1. A^k               ∈ R^{d_x, d_x}                         
+1. A    ∈ R^{d_x, d_x}         |   2. Y          ∈ R^{T, d_y}                   |  2. H_k = CA^{k-1}L   ∈ R^{d_y, d_y}                                  
+2. C    ∈ R^{d_y, d_x}         |   3. B_hat      ∈ R^{(p * d_y), d_y}           |                          
+3. L    ∈ R^{d_x, d_y}         |   4. U_hat      ∈ R^{T, d_y}                   |                             
+4. x_t  ∈ R^{d_x}              |   5. QX_hat     ∈ R^{(p * d_y), (p * d_y)}     |                          
+5. y_t  ∈ R^{d_y}              |   6. Sigma_hat  ∈ R^{d_y, d_y}                 |                       
+6. e_t  ∈ R^{d_y}              |   7. pi_hat     ∈ R^{(p * (d_y)^2), 1}         |
+
 """
-
-
 
 # Helpers: sampling new realizations of A, C, and L
 def sample_stable_A(
@@ -21,9 +35,9 @@ def sample_stable_A(
     rng: np.random.Generator
 ) -> np.ndarray:
     """
-    Sample A and rescale so its spectral radius lies in [rho_min, rho_max].
+    Sample A ∈ R^{d_x, d_x} and rescale so its spectral radius lies in [rho_min, rho_max].
     """
-    A_raw = rng.normal(size=(d_x, d_x))
+    A_raw = rng.normal(size=(d_x, d_x))  
     rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
     rho_target = rng.uniform(rho_min, rho_max)
     return (rho_target / (rho_raw + 1e-12)) * A_raw
@@ -48,12 +62,12 @@ def sample_stable_A_identity_centered(
 
 
 def sample_C(d_y: int, d_x: int, rng: np.random.Generator) -> np.ndarray:
-    """Sample observation matrix C ∈ R^{d_y x d_x}."""
+    """Sample observation matrix C ∈ R^{d_y, d_x}."""
     return rng.normal(size=(d_y, d_x))
 
 
 def sample_L(d_x: int, d_y: int, rng: np.random.Generator) -> np.ndarray:
-    """Sample noise injection matrix L ∈ R^{d_x x d_y}."""
+    """Sample noise injection matrix L ∈ R^{d_x, d_y}."""
     return rng.normal(size=(d_x, d_y))
 
 
@@ -114,16 +128,30 @@ def simulate_y_only(
     Assumes simulate_lds returns (x, y, e), so y is index 1.
     """
     out = simulate_lds(n, A, C, L, rng, e_scale)
-    return out[1] if isinstance(out, tuple) else out
+    return out[1] if isinstance(out, tuple) else out     # y ∈ R^{n, d_x}  
 
 
 # Fit VAR(p) and return objects needed for Mahalanobis metric
 def fit_var_and_components(y: np.ndarray, p: int):
     """
-    Fit VAR(p) by LS and return:
-      - pi_hat     : vec(Phi_1, ..., Phi_p) in Fortran order
-      - Sigma_hat  : residual covariance = (U^T U)/T
-      - QX_hat     : regressor covariance = (X^T X)/T
+    Fit a VAR(p) model via least squares and return the components needed
+    for the Mahal. distance between VAR parameter vectors.
+
+    Parameters:                 |   Returns:                                     |    Internal Shapes:
+                                |                                                |    
+    y: np.ndarray               |   pi_hat:    np.ndarray                        |    X      ∈ R^{T x (p d_y)}
+       observed time series     |              vectorized CAR coeff. (Phi)       |    
+       shape - (n, d_y)         |              ∈ R^{(p * d_y^2), (1)}            |    Y      ∈ R^{T x d_y}
+                                |                                                |   
+    p: int                      |   Sigma_hat: np.ndarray                        |    B_hat  ∈ R^{(p d_y) x d_y}
+       VAR order                |              residual covariance matrix        |
+       i.e., number of lags     |              ∈ R^{d_y, d_y}                    |    U_hat  ∈ R^{T x d_y}
+                                |              = (U^T @ U) / T                   |    
+                                |                                                |    Phi_i  ∈ R^{d_y x d_y}
+                                |   QX_hat:    np.ndarray                        |
+                                |              regressor covariance matrix       |    T      = n - p
+                                |              ∈ R^{(p * d_y),(p * d_y)}         |
+                                |              = (X^T @ X) / T                   |
     """
     X, Y = build_var_xy(y, p=p)
 
@@ -178,8 +206,8 @@ def plot_kde_per_realization(same_list, diff_list):
     n_realizations = len(same_list)
 
     for i in range(n_realizations):
-        same_vals = np.asarray(same_list[i])
-        diff_vals = np.asarray(diff_list[i])
+        same_vals = np.asarray(same_list[i]) # array ∈ R^trials 
+        diff_vals = np.asarray(diff_list[i]) # array ∈ R^trials
 
         if same_vals.size < 2 or diff_vals.size < 2:
             continue
@@ -271,8 +299,8 @@ def ir_profile_for_realization(
 
     A1, C1, L1 = systems[idx]
 
-    dists = []
-    js = []
+    dists = []  # one scalar IR distance per comparison realization
+    js = []     # corresponding realization indices
 
     for j in range(R):
         if j == idx:
@@ -371,9 +399,9 @@ def run_realization_sensitivity(
         print(f"Realization {r+1}/{realizations}")
 
         # Fixed realization for SAME comparisons in this outer loop
-        A = sample_stable_A(d_x, rho_min, rho_max, rng)
-        C = sample_C(d_y, d_x, rng)
-        L = sample_L(d_x, d_y, rng)
+        A = sample_stable_A(d_x, rho_min, rho_max, rng)              # A: (d_x, d_x)
+        C = sample_C(d_y, d_x, rng)                                  # C: (d_y, d_x)
+        L = sample_L(d_x, d_y, rng)                                  # L: (d_x, d_y)
 
         # System for y3
         A3 = sample_stable_A(d_x, rho_min, rho_max, rng)
@@ -393,31 +421,31 @@ def run_realization_sensitivity(
         systems.append((A, C, L))
         diff_pairs.append(((A3, C3, L3), (A4, C4, L4)))
 
-        D_same_M, D_diff_M = [], []
+        D_same_M, D_diff_M = [], [] # vectors of scalars to be populated / appended below 
         cond_QX_list = []
 
         for _ in range(trials):
             
             # SAME LDS: y1 vs y2 from the same fixed system
-            y1 = simulate_y_only(n, A, C, L, rng, e_scale)
-            y2 = simulate_y_only(n, A, C, L, rng, e_scale)
+            y1 = simulate_y_only(n, A, C, L, rng, e_scale)   # y1: (n, d_y)
+            y2 = simulate_y_only(n, A, C, L, rng, e_scale)   # y2: (n, d_y)
 
-            pi1, Sigma1, QX1 = fit_var_and_components(y1, p)
-            pi2, Sigma2, QX2 = fit_var_and_components(y2, p)
+            pi1, Sigma1, QX1 = fit_var_and_components(y1, p) 
+            pi2, Sigma2, QX2 = fit_var_and_components(y2, p) # pi2: (p * d, y^2), Sigma2: (d_y, d_y), QX2: (p * d_y, p * d_y)
 
             cond_QX_list.append(np.linalg.cond(QX1))
             cond_QX_list.append(np.linalg.cond(QX2))
 
-            d_same = mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2)
+            d_same = mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2) # scalar distance
             D_same_M.append(d_same)
 
             
             # DIFFERENT LDS: y3 vs y4 from two fixed but distinct and independent LDS realizations 
-            y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale)
-            y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale)
+            y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale) # y3: (n, d_y)
+            y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale) # y4: (n, d_y)
 
-            pi3, Sigma3, QX3 = fit_var_and_components(y3, p)
-            pi4, Sigma4, QX4 = fit_var_and_components(y4, p)
+            pi3, Sigma3, QX3 = fit_var_and_components(y3, p) # pi3: (p * d, y^2), Sigma3: (d_y, d_y), QX3: (p * d_y, p * d_y)
+            pi4, Sigma4, QX4 = fit_var_and_components(y4, p) # pi4: (p * d, y^2), Sigma4: (d_y, d_y), QX4: (p * d_y, p * d_y)
 
             cond_QX_list.append(np.linalg.cond(QX3))
             cond_QX_list.append(np.linalg.cond(QX4))
