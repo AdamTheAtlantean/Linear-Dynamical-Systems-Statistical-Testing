@@ -6,25 +6,37 @@ from lds import simulate_lds
 from var_model import build_var_xy, fit_ls, unpack_B_to_Phi
 from metrics import mahalanobis_var_distance
 
+from evaluate_H0 import evaluate_H0, print_H0_summary
+from evaluate_H1 import evaluate_H1, print_H1_summary
 
 """
 Global dimension convensions:
-
 1. n      = length of the observed time series
 2. T      = effictive VAR sample size, i.e., n - p
 3. d_x    = latent state dimension
 4. d_y    = observation dimension
 5. p      = VAR order
 
-LDS objects:                   |   VAR(p) objects:                              |  IR response objects:
-                               |   1. X          ∈ R^{T, (p * d_y)}             |  1. A^k               ∈ R^{d_x, d_x}                         
-1. A    ∈ R^{d_x, d_x}         |   2. Y          ∈ R^{T, d_y}                   |  2. H_k = CA^{k-1}L   ∈ R^{d_y, d_y}                                  
-2. C    ∈ R^{d_y, d_x}         |   3. B_hat      ∈ R^{(p * d_y), d_y}           |                          
-3. L    ∈ R^{d_x, d_y}         |   4. U_hat      ∈ R^{T, d_y}                   |                             
-4. x_t  ∈ R^{d_x}              |   5. QX_hat     ∈ R^{(p * d_y), (p * d_y)}     |                          
-5. y_t  ∈ R^{d_y}              |   6. Sigma_hat  ∈ R^{d_y, d_y}                 |                       
-6. e_t  ∈ R^{d_y}              |   7. pi_hat     ∈ R^{(p * (d_y)^2), 1}         |
+LDS objects:                                                                                                           
+1. A      ∈ R^{d_x, d_x}                                                                   
+2. C      ∈ R^{d_y, d_x}                                                
+3. L      ∈ R^{d_x, d_y}                                                           
+4. x_t    ∈ R^{d_x}                                                
+5. y_t    ∈ R^{d_y}                                                         
+6. e_t    ∈ R^{d_y}                          
 
+VAR(p) objects:     
+1. X          ∈ R^{T, (p * d_y)}
+2. Y          ∈ R^{T, d_y}
+3. B_hat      ∈ R^{(p * d_y), d_y}
+4. U_hat      ∈ R^{T, d_y} 
+5. QX_hat     ∈ R^{(p * d_y), (p * d_y)}
+6. Sigma_hat  ∈ R^{d_y, d_y}
+7. pi_hat     ∈ R^{(p * (d_y)^2), 1}
+
+IR response objects:
+1. A^k               ∈ R^{d_x, d_x}
+2. H_k = CA^{k-1}L   ∈ R^{d_y, d_y}
 """
 
 # Helpers: sampling new realizations of A, C, and L
@@ -141,9 +153,9 @@ def fit_var_and_components(y: np.ndarray, p: int):
                                 |                                                |    
     y: np.ndarray               |   pi_hat:    np.ndarray                        |    X      ∈ R^{T x (p d_y)}
        observed time series     |              vectorized CAR coeff. (Phi)       |    
-       shape - (n, d_y)         |              ∈ R^{(p * d_y^2), (1)}            |    Y      ∈ R^{T x d_y}
+       shape - (n, d_y)         |              ∈ R^{(p * d_y^2), 1}              |    Y      ∈ R^{T x d_y}
                                 |                                                |   
-    p: int                      |   Sigma_hat: np.ndarray                        |    B_hat  ∈ R^{(p d_y) x d_y}
+    p: int                      |   Sigma_hat: np.ndarray                        |    B_hat  ∈ R^{(p * d_y) x d_y}
        VAR order                |              residual covariance matrix        |
        i.e., number of lags     |              ∈ R^{d_y, d_y}                    |    U_hat  ∈ R^{T x d_y}
                                 |              = (U^T @ U) / T                   |    
@@ -153,23 +165,27 @@ def fit_var_and_components(y: np.ndarray, p: int):
                                 |              ∈ R^{(p * d_y),(p * d_y)}         |
                                 |              = (X^T @ X) / T                   |
     """
-    X, Y = build_var_xy(y, p=p)
 
-    T = X.shape[0]
+    X, Y = build_var_xy(y, p=p)
+    # X ∈ R^{T x (p d_y)}, Y ∈ R^{T x d_y}
+
+    T = X.shape[0] # T = n - p
     if T <= 0:
         raise ValueError(f"Empty VAR design matrix: got T={T}. Increase n or decrease p.")
 
-    B_hat = fit_ls(Y, X)
-    U_hat = Y - X @ B_hat
+    B_hat = fit_ls(Y, X)              # ∈ R^{(p * d_y) x d_y}
+    U_hat = Y - X @ B_hat             # ∈ R^{T x d_y}
 
-    Sigma_hat = (U_hat.T @ U_hat) / T
-    QX_hat = (X.T @ X) / T  
+    Sigma_hat = (U_hat.T @ U_hat) / T # ∈ R^{d_y, d_y}
+    QX_hat = (X.T @ X) / T            # ∈ R^{(p * d_y),(p * d_y)}
+
+
     #QX_hat = np.einsum('ti,tj->ij', X, X) / T
 
     d_y = Y.shape[1]
-    Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y)
+    Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y) # list of p matrices, each Phi_i ∈ R^{d_y, d_y}
 
-    pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list])
+    pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list]) # ∈ R^{(p * d_y^2), 1}
     return pi_hat, Sigma_hat, QX_hat
 
 
@@ -199,7 +215,7 @@ def _kde_fallback(xs: np.ndarray, dist: np.ndarray) -> np.ndarray:
     return ys
 
 
-def plot_kde_per_realization(same_list, diff_list):
+def plot_kde_per_realization(same_list, diff_list, tau=None):
     """
     For each realization, plot SAME KDE vs DIFFERENT KDE.
     """
@@ -235,13 +251,15 @@ def plot_kde_per_realization(same_list, diff_list):
         plt.title(f"Probability Distribution Comparison: Realization {i+1}")
         plt.xlabel("Mahalanobis Distance")
         plt.ylabel("Probability Density")
+        if tau is not None:
+            plt.axvline(tau, color='red', linestyle="--", linewidth=1.5, label=r"$\tau$")
         plt.legend()
         plt.grid(alpha=0.3)
         plt.tight_layout()
         plt.show()
 
 
-def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=None, xlim=None):
+def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=None, xlim=None, tau=None):
     """
     Plot one KDE per realization on the same graph.
     """
@@ -278,6 +296,8 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
     plt.xlabel("Mahalanobis Distance")
     plt.ylabel("Estimated Density")
     plt.grid(alpha=0.3)
+    if tau is not None:
+        plt.axvline(tau, color='red', linestyle="--", linewidth=1.5, label=r"$\tau$")
     plt.show()
 
 
@@ -404,9 +424,9 @@ def run_realization_sensitivity(
         L = sample_L(d_x, d_y, rng)                                  # L: (d_x, d_y)
 
         # System for y3
-        A3 = sample_stable_A(d_x, rho_min, rho_max, rng)
-        C3 = sample_C(d_y, d_x, rng)
-        L3 = sample_L(d_x, d_y, rng)
+        A3 = sample_stable_A(d_x, rho_min, rho_max, rng)             # A3: (d_x, d_x)
+        C3 = sample_C(d_y, d_x, rng)                                 # C3: (d_y, d_x)
+        L3 = sample_L(d_x, d_y, rng)                                 # L3: (d_x, d_y)
 
         # System for y4
         if diff_regime is None:
@@ -414,9 +434,9 @@ def run_realization_sensitivity(
         else:
             rho_min4, rho_max4 = diff_regime
 
-        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)
-        C4 = sample_C(d_y, d_x, rng)
-        L4 = sample_L(d_x, d_y, rng)
+        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)   # A4: (d_x, d_x)
+        C4 = sample_C(d_y, d_x, rng)                                           # C4: (d_y, d_x)
+        L4 = sample_L(d_x, d_y, rng)                                           # L4: (d_x, d_y)
 
         systems.append((A, C, L))
         diff_pairs.append(((A3, C3, L3), (A4, C4, L4)))
@@ -576,14 +596,43 @@ if __name__ == "__main__":
     plot_kde_overlay(
         same_M,
         "Mahalanobis SAME KDE across realizations (short)",
-        bw_method="silverman"
+        bw_method="silverman",
+        tau=170
+
     )
 
     plot_kde_overlay(
         diff_M,
         "Mahalanobis DIFFERENT KDE across realizations (short)",
-        bw_method="silverman"
+        bw_method="silverman",
+        tau=170
     )
 
     # Per-realization SAME vs DIFFERENT KDE
-    plot_kde_per_realization(same_M, diff_M)
+    plot_kde_per_realization(same_M, diff_M, tau=170)
+
+
+  #  summary = summarize_threshold_analysis(
+  #      same_M,
+  #      diff_M,
+  #      best_by="f1",
+  #      make_plots=True
+  #  )
+
+
+ #   tau = 200.0
+ #   summary = evaluate_threshold(same_M, diff_M, tau)
+
+ #  print("Fixed-threshold hypothesis test summary")
+ #   print(f"tau:   {summary['tau']}")
+ #   print(f"FPR:   {summary['fpr']:.6f}")
+ #   print(f"FNR:   {summary['fnr']:.6f}")
+ #   print(f"FP={summary['FP']}  TN={summary['TN']}  TP={summary['TP']}  FN={summary['FN']}")
+
+    tau = 170.0
+
+    summary = evaluate_H0(same_M, tau)
+    print_H0_summary(summary)
+
+    summary = evaluate_H1(diff_M, tau)
+    print_H1_summary(summary)
