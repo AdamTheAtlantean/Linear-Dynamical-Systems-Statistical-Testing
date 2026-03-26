@@ -60,18 +60,22 @@ def sample_stable_A_identity_centered(
     rho_min: float,
     rho_max: float,
     rng: np.random.Generator,
-    eye_scalar: float = 1
+    beta: float = 1.0,
+    noise_scale: float = 1.0,
 ) -> np.ndarray:
     """
-    Sample A around a scaled identity, then rescale so its spectral radius
-    lies in [rho_min, rho_max].
+    Sample A_raw = beta * I + noise_scale * Z, where Z has i.i.d. standard normal
+    entries, then rescale such that the spectral radius (rho(A)) lies within [rho_min, rho_max].
     """
     
-    A_raw = eye_scalar * np.eye(d_x) + rng.normal(size=(d_x, d_x))
+    Z  = rng.normal(size=(d_x, d_x))
+    A_raw = beta * np.eye(d_x) + noise_scale * Z
+
     rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
     rho_target = rng.uniform(rho_min, rho_max)
-    return (rho_target / (rho_raw + 1e-12)) * A_raw
 
+    A = (rho_target / (rho_raw + 1e-12)) * A_raw
+    return A
 
 def sample_C(d_y: int, d_x: int, rng: np.random.Generator) -> np.ndarray:
     """Sample observation matrix C ∈ R^{d_y, d_x}."""
@@ -376,7 +380,8 @@ def run_realization_sensitivity(
     d_y: int = 5,
     e_scale: float = 0.2,
     seed: int = 0,
-    diff_regime: tuple[float, float] | None = None,
+    diff_regime_y3: tuple[float, float] | None = None, 
+    diff_regime_y4: tuple[float, float] | None = None,
     K_ir: int = 25,
 ):
     """
@@ -424,15 +429,21 @@ def run_realization_sensitivity(
         L = sample_L(d_x, d_y, rng)                                  # L: (d_x, d_y)
 
         # System for y3
-        A3 = sample_stable_A(d_x, rho_min, rho_max, rng)             # A3: (d_x, d_x)
+        if diff_regime_y3 is None:
+            rho_min3, rho_max3 = rho_min, rho_max
+        else:
+            rho_min3, rho_max3 = diff_regime_y3
+
+
+        A3 = sample_stable_A(d_x, rho_min3, rho_max3, rng)             # A3: (d_x, d_x)
         C3 = sample_C(d_y, d_x, rng)                                 # C3: (d_y, d_x)
         L3 = sample_L(d_x, d_y, rng)                                 # L3: (d_x, d_y)
 
         # System for y4
-        if diff_regime is None:
+        if diff_regime_y4 is None:
             rho_min4, rho_max4 = rho_min, rho_max
         else:
-            rho_min4, rho_max4 = diff_regime
+            rho_min4, rho_max4 = diff_regime_y4
 
         A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)   # A4: (d_x, d_x)
         C4 = sample_C(d_y, d_x, rng)                                           # C4: (d_y, d_x)
@@ -568,7 +579,8 @@ if __name__ == "__main__":
         d_y=5,
         e_scale=0.2,
         seed=0,
-        diff_regime=None,
+        diff_regime_y3=(0.5, 0.7),
+        diff_regime_y4=(0.01, 0.1),
         K_ir=25,
     )
 
