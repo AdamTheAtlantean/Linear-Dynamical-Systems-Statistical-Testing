@@ -51,3 +51,4 @@ def unpack_B_to_Phi(B_hat, d_y, p):
         block = B_hat[i * d_y : (i + 1) * d_y, :]
         Phi.append(block.T)
     return Phi
+

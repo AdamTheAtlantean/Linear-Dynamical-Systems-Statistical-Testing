@@ -195,179 +195,6 @@ def fit_var_and_components(y: np.ndarray, p: int):
 
 
 
-# KDE utilities
-def _kde_fallback(xs: np.ndarray, dist: np.ndarray) -> np.ndarray:
-    """
-    Simple Gaussian-mixture KDE fallback for near-singular cases.
-    """
-    dist = np.asarray(dist)
-    n = dist.size
-
-    if n == 0:
-        return np.zeros_like(xs)
-
-    if n == 1:
-        h = 1e-3
-    else:
-        std = np.std(dist, ddof=1) + 1e-12
-        h = 1.06 * std * n ** (-1 / 5)
-
-    ys = np.mean(
-        np.exp(-0.5 * ((xs[:, None] - dist[None, :]) / h) ** 2),
-        axis=1
-    ) / (h * np.sqrt(2 * np.pi))
-
-    return ys
-
-
-def plot_kde_per_realization(same_list, diff_list, tau=None):
-    """
-    For each realization, plot SAME KDE vs DIFFERENT KDE.
-    """
-    n_realizations = len(same_list)
-
-    for i in range(n_realizations):
-        same_vals = np.asarray(same_list[i]) # array ∈ R^trials 
-        diff_vals = np.asarray(diff_list[i]) # array ∈ R^trials
-
-        if same_vals.size < 2 or diff_vals.size < 2:
-            continue
-
-        xmin = min(same_vals.min(), diff_vals.min())
-        xmax = max(same_vals.max(), diff_vals.max())
-        x = np.linspace(xmin, xmax, 500)
-
-        try:
-            kde_same = gaussian_kde(same_vals)
-            ys_same = kde_same(x)
-        except Exception:
-            ys_same = _kde_fallback(x, same_vals)
-
-        try:
-            kde_diff = gaussian_kde(diff_vals)
-            ys_diff = kde_diff(x)
-        except Exception:
-            ys_diff = _kde_fallback(x, diff_vals)
-
-        plt.figure(figsize=(6, 4))
-        plt.plot(x, ys_same, label="Same KDE", linewidth=2)
-        plt.plot(x, ys_diff, label="Different KDE", linewidth=2)
-
-        plt.title(f"Probability Distribution Comparison: Realization {i+1}")
-        plt.xlabel("Mahalanobis Distance")
-        plt.ylabel("Probability Density")
-        if tau is not None:
-            plt.axvline(tau, color='red', linestyle="--", linewidth=1.5, label=r"$\tau$")
-        plt.legend()
-        plt.grid(alpha=0.3)
-        plt.tight_layout()
-        plt.show()
-
-
-def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=None, xlim=None, tau=None):
-    """
-    Plot one KDE per realization on the same graph.
-    """
-    plt.figure(figsize=(8, 5))
-
-    dists = [np.asarray(d) for d in distributions if np.asarray(d).size > 0]
-    if len(dists) == 0:
-        print(f"[plot_kde_overlay] Nothing to plot for: {title}")
-        return
-
-    all_vals = np.concatenate(dists)
-
-    if xlim is None:
-        lo, hi = np.quantile(all_vals, [0.001, 0.999])
-        xs = np.linspace(lo, hi, gridsize)
-        plt.xlim(0, 10000)
-    else:
-        xs = np.linspace(xlim[0], xlim[1], gridsize)
-        plt.xlim(xlim[0], xlim[1])
-
-    for i, dist in enumerate(distributions):
-        dist = np.asarray(dist)
-        if dist.size < 2 or np.std(dist) == 0:
-            continue
-
-        try:
-            ys = gaussian_kde(dist, bw_method=bw_method)(xs)
-        except Exception:
-            ys = _kde_fallback(xs, dist)
-
-        plt.plot(xs, ys, alpha=0.75, label=f"Realization {i+1}")
-
-    plt.title(title)
-    plt.xlabel("Mahalanobis Distance")
-    plt.ylabel("Estimated Density")
-    plt.grid(alpha=0.3)
-    if tau is not None:
-        plt.axvline(tau, color='red', linestyle="--", linewidth=1.5, label=r"$\tau$")
-    plt.show()
-
-
-
-# IR profile for one realization
-def ir_profile_for_realization(
-    systems,
-    idx: int,
-    K_ir: int = 25,
-    normalize: bool = True,
-    top_k: int = 5,
-):
-    """
-    Compare one realization against all others via IR distance.
-    """
-    R = len(systems)
-    if not (0 <= idx < R):
-        raise ValueError(f"idx must be in [0, {R-1}]")
-
-    A1, C1, L1 = systems[idx]
-
-    dists = []  # one scalar IR distance per comparison realization
-    js = []     # corresponding realization indices
-
-    for j in range(R):
-        if j == idx:
-            continue
-        A2, C2, L2 = systems[j]
-        d = impulse_response_distance(A1, C1, L1, A2, C2, L2, K=K_ir, normalize=normalize)
-        dists.append(d)
-        js.append(j)
-
-    dists = np.asarray(dists, dtype=float)
-    js = np.asarray(js, dtype=int)
-    order = np.argsort(dists)
-
-    summary = {
-        "realization": idx + 1,
-        "mean": float(np.mean(dists)),
-        "median": float(np.median(dists)),
-        "min": float(np.min(dists)),
-        "max": float(np.max(dists)),
-        "nearest_neighbor": int(js[order[0]] + 1),
-        "nearest_neighbor_dist": float(dists[order[0]]),
-    }
-
-    print(f"\nIR profile for Realization {idx+1} (K={K_ir}, normalize={normalize})")
-    print(
-        f"  mean={summary['mean']:.6g}, median={summary['median']:.6g}, "
-        f"min={summary['min']:.6g}, max={summary['max']:.6g}"
-    )
-    print(
-        f"  nearest neighbor: Realization {summary['nearest_neighbor']} "
-        f"with D_H={summary['nearest_neighbor_dist']:.6g}"
-    )
-
-    print(f"  {top_k} closest realizations:")
-    for k in range(min(top_k, len(order))):
-        j = js[order[k]]
-        print(f"    -> Realization {j+1}: D_H = {dists[order[k]]:.6g}")
-
-    return dists, summary
-
-
-
 # Main experiment: realization sensitivity
 def run_realization_sensitivity(
     regime_name: str,
@@ -658,6 +485,7 @@ def plot_p_sweep_results(sweep_results):
     auc_vals = np.array([r["auc"] for r in sweep_results], dtype=float)
     f1_vals = np.array([r["f1"] for r in sweep_results], dtype=float)
     fpr_vals = np.array([r["fpr"] for r in sweep_results], dtype=float)
+    fnr_vals = np.array([r["fnr"] for r in sweep_results], dtype=float)
     tpr_vals = np.array([r["recall"] for r in sweep_results], dtype=float)
     thresh_vals = np.array([r["best_threshold"] for r in sweep_results], dtype=float)
 
@@ -684,10 +512,11 @@ def plot_p_sweep_results(sweep_results):
 
     plt.figure(figsize=(7, 4))
     plt.plot(p_vals, fpr_vals, marker="o", linewidth=2, label="FPR")
-    plt.plot(p_vals, tpr_vals, marker="o", linewidth=2, label="TPR")
+    plt.plot(p_vals, fnr_vals, marker="o", linewidth=2, label="FNR")
+    plt.plot(p_vals, tpr_vals, marker="o", linewidth=2, linestyle="--", label="TPR")
     plt.xlabel("VAR order p")
     plt.ylabel("Rate")
-    plt.title("FPR and TPR vs VAR order p")
+    plt.title("Error Rates vs VAR order p")
     plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
@@ -704,82 +533,110 @@ def plot_p_sweep_results(sweep_results):
 
 
 
+def run_p_sweep_with_variance(
+    p_values,
+    n_repeats=100,
+    **kwargs
+):
+    """
+    Repeat the full p-sweep experiment multiple times
+    and compute mean + std for each metric.
+    """
+    all_results = {p: {"auc": [], "f1": []} for p in p_values}
 
-# Run
+    for r in range(n_repeats):
+        print(f"\n=== Repeat {r+1}/{n_repeats} ===")
+
+        # change seed each time
+        results = run_p_sweep(
+            p_values=p_values,
+            seed=r,
+            **kwargs
+        )
+
+        for row in results:
+            p = row["p"]
+            all_results[p]["auc"].append(row["auc"])
+            all_results[p]["f1"].append(row["f1"])
+
+    # Aggregate
+    summary = []
+
+    for p in p_values:
+        auc_arr = np.array(all_results[p]["auc"])
+        f1_arr  = np.array(all_results[p]["f1"])
+
+        summary.append({
+            "p": p,
+            "auc_mean": np.mean(auc_arr),
+            "auc_std": np.std(auc_arr),
+            "f1_mean": np.mean(f1_arr),
+            "f1_std": np.std(f1_arr),
+        })
+
+    return summary
+
+
+def plot_with_variance(summary):
+    p_vals = np.array([r["p"] for r in summary])
+
+    auc_mean = np.array([r["auc_mean"] for r in summary])
+    auc_std  = np.array([r["auc_std"] for r in summary])
+
+    f1_mean = np.array([r["f1_mean"] for r in summary])
+    f1_std  = np.array([r["f1_std"] for r in summary])
+
+    plt.figure(figsize=(7,4))
+    plt.errorbar(p_vals, auc_mean, yerr=auc_std, marker="o", capsize=4)
+    plt.xlabel("p")
+    plt.ylabel("AUC")
+    plt.title("AUC vs p (mean ± std)")
+    plt.grid(alpha=0.3)
+    plt.show()
+
+    plt.figure(figsize=(7,4))
+    plt.errorbar(p_vals, f1_mean, yerr=f1_std, marker="o", capsize=4)
+    plt.xlabel("p")
+    plt.ylabel("F1")
+    plt.title("F1 vs p (mean ± std)")
+    plt.grid(alpha=0.3)
+    plt.show()
+
+
+
+
 if __name__ == "__main__":
 
-    same_M, diff_M, ir_dists, diff_ir_dists, systems, diff_pairs = run_realization_sensitivity(
+    p_values = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+
+    summary = run_p_sweep_with_variance(
+        p_values=p_values,
+        n_repeats=100,
         regime_name="short (within-regime diff)",
         rho_min=0.75,
         rho_max=0.85,
         realizations=25,
         trials=40,
         n=1500,
-        p=2,
         d_x=5,
         d_y=5,
         e_scale=0.2,
-        seed=0,
-        diff_regime_y3=(0.5, 0.7),
-        diff_regime_y4=(0.75, 0.85),
+        diff_regime_y3=(0.75, 0.85),
+        diff_regime_y4=(0.8, 0.9),
         K_ir=25,
-    )
-
-    # IR profile per realization
-#    for r in range(1, len(systems) + 1):
-#        ir_profile_for_realization(
-#            systems,
-#            idx=r - 1,
-#            K_ir=25,
-#            normalize=True,
-#            top_k=3,
-#        )
-#
-    # Histogram of pairwise IR distances
-#    if len(ir_dists) > 0:
-#        plt.figure()
-#        plt.hist(ir_dists, bins=15)
-#        plt.title("Pairwise impulse-response distances across realizations")
-#        plt.xlabel("D_H")
-#        plt.ylabel("Count")
-#        plt.grid(alpha=0.3)
-#        plt.show()
-
-    # KDE overlays across realizations
-    plot_kde_overlay(
-        same_M,
-        "Mahalanobis SAME KDE across realizations (short)",
-        bw_method="silverman",
-        tau=57.308373
-
-    )
-
-    plot_kde_overlay(
-        diff_M,
-        "Mahalanobis DIFFERENT KDE across realizations (short)",
-        bw_method="silverman",
-        tau=57.308373
-    )
-
-    # Per-realization SAME vs DIFFERENT KDE
-    plot_kde_per_realization(same_M, diff_M, tau=57.308373)
-
-
-
-
-    # Threshold Analysis
-
-    summary = summarize_threshold_analysis(
-        same_M,
-        diff_M,
         best_by="f1",
-        make_plots=True
     )
 
-    tau = 57.308373
+    print("\n" + "=" * 90)
+    print("P-SWEEP SUMMARY TABLE (100 REPEATS)")
+    print("=" * 90)
+    for row in summary:
+        print(
+            f"p={row['p']:>2d} | "
+            f"AUC mean={row['auc_mean']:.4f} | "
+            f"AUC std={row['auc_std']:.4f} | "
+            f"F1 mean={row['f1_mean']:.4f} | "
+            f"F1 std={row['f1_std']:.4f}"
+        )
 
-    summary = evaluate_H0(same_M, tau)
-    print_H0_summary(summary)
-
-    summary = evaluate_H1(diff_M, tau)
-    print_H1_summary(summary)
+    plot_with_variance(summary)

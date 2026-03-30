@@ -87,12 +87,3 @@ def print_H1_summary(summary):
     print(f"FN:       {summary['FN']}")
     print(f"TPR:      {summary['tpr']:.6f}")
     print(f"FNR:      {summary['fnr']:.6f}")
-
-
-if __name__ == "__main__":
-    from realizations_new import diff_M
-
-    tau = 163.0
-
-    summary = evaluate_H1(diff_M, tau)
-    print_H1_summary(summary)

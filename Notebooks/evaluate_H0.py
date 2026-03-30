@@ -40,8 +40,8 @@ def evaluate_H0(same_list, tau):
 
     Since this function uses SAME-LDS samples only, H0 is true for all samples.
     Therefore:
-      - distance > tau  => false positive
-      - distance <= tau => true negative
+      - distance > tau: false positive
+      - distance <= tau: true negative
 
     Parameters
     ----------
@@ -77,7 +77,7 @@ def evaluate_H0(same_list, tau):
 
 def print_H0_summary(summary):
     """
-    Pretty-print the H0 evaluation summary.
+    H0 evaluation summary.
     """
     print("\n--- H0 Evaluation (SAME LDS) ---")
     print("H0: LDS^(1) = LDS^(2)")
@@ -87,13 +87,3 @@ def print_H0_summary(summary):
     print(f"TN:       {summary['TN']}")
     print(f"FPR:      {summary['fpr']:.6f}")
     print(f"TNR:      {summary['tnr']:.6f}")
-
-
-if __name__ == "__main__":
-
-    from realizations_new import same_M
-
-    tau = 163.0
-
-    summary = evaluate_H0(same_M, tau)
-    print_H0_summary(summary)

@@ -64,7 +64,7 @@ def evaluate_threshold(scores, y_true, threshold):
     TP, FP, TN, FN = confusion_from_threshold(scores, y_true, threshold)
     out = metrics_from_confusion(TP, FP, TN, FN,)
     out.update({
-        "threshold ": floar(threshold),
+        "threshold ": float(threshold),
         "TP ": TP,
         "FP ": FP,
         "TN ": TN,
@@ -130,23 +130,22 @@ def find_best_threshold(results, criterion="f1"):
     """
 
     if criterion == "f1":
-        vals = np.array([r["f1"] for r  in results], dtype=float)
+        vals = np.array([r["f1"] for r in results], dtype=float)
     elif criterion == "accuracy":
         vals = np.array([r["accuracy"] for r in results], dtype=float)
     elif criterion == "youden":
         vals = np.array([r["recall"] - r["fpr"] for r in results], dtype=float)
     else:
         raise ValueError("criterion must be one of {'f1', 'accuracy', 'youden'}")
-    
 
     idx = int(np.argmax(vals))
-    best = dict(results[idx]) # copy
-    best = ["criterion"] = criterion
-    best = ["criterion_value"] = float(vals[idx])
+    best = dict(results[idx])  # copy
+    best["criterion"] = criterion
+    best["criterion_value"] = float(vals[idx])
     return best
 
 
-def summarize_threshold_analysis(same_list, diff_list, best_by="f1", make_plot=True):
+def summarize_threshold_analysis(same_list, diff_list, best_by="f1", make_plots=True):
     """
     """
 
