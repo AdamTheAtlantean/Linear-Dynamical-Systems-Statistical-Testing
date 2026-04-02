@@ -145,7 +145,7 @@ def simulate_y_only(
     Assumes simulate_lds returns (x, y, e), so y is index 1.
     """
     out = simulate_lds(n, A, C, L, rng, e_scale)
-    return out[1] if isinstance(out, tuple) else out     # y ∈ R^{n, d_x}  
+    return out[1] if isinstance(out, tuple) else out     # y ∈ R^{n, d_y}  
 
 
 # Fit VAR(p) and return objects needed for Mahalanobis metric
@@ -280,7 +280,7 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
     if xlim is None:
         lo, hi = np.quantile(all_vals, [0.001, 0.999])
         xs = np.linspace(lo, hi, gridsize)
-        plt.xlim(0, 10000)
+        plt.xlim(0, 1000)
     else:
         xs = np.linspace(xlim[0], xlim[1], gridsize)
         plt.xlim(xlim[0], xlim[1])

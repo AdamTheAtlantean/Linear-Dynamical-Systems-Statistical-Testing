@@ -8,36 +8,37 @@ from metrics import mahalanobis_var_distance
 from threshold import summarize_threshold_analysis
 
 """
-Global dimension convensions:
+Global dimension conventions:
 1. n      = length of the observed time series
-2. T      = effictive VAR sample size, i.e., n - p
+2. T      = effective VAR sample size, i.e., n - p
 3. d_x    = latent state dimension
 4. d_y    = observation dimension
 5. p      = VAR order
 
-LDS objects:                                                                                                           
-1. A      ∈ R^{d_x, d_x}                                                                   
-2. C      ∈ R^{d_y, d_x}                                                
-3. L      ∈ R^{d_x, d_y}                                                           
-4. x_t    ∈ R^{d_x}                                                
-5. y_t    ∈ R^{d_y}                                                         
-6. e_t    ∈ R^{d_y}                          
+LDS objects:
+1. A      ∈ R^{d_x, d_x}
+2. C      ∈ R^{d_y, d_x}
+3. L      ∈ R^{d_x, d_y}
+4. x_t    ∈ R^{d_x}
+5. y_t    ∈ R^{d_y}
+6. e_t    ∈ R^{d_y}
 
-VAR(p) objects:     
+VAR(p) objects:
 1. X          ∈ R^{T, (p * d_y)}
 2. Y          ∈ R^{T, d_y}
 3. B_hat      ∈ R^{(p * d_y), d_y}
-4. U_hat      ∈ R^{T, d_y} 
+4. U_hat      ∈ R^{T, d_y}
 5. QX_hat     ∈ R^{(p * d_y), (p * d_y)}
 6. Sigma_hat  ∈ R^{d_y, d_y}
 7. pi_hat     ∈ R^{(p * (d_y)^2), 1}
 
 IR response objects:
 1. A^k               ∈ R^{d_x, d_x}
-2. H_k = CA^{k-1}L   ∈ R^{d_y, d_y}
+2. H_k = C A^{k-1} L ∈ R^{d_y, d_y}
 """
 
-# Helpers: sampling new realizations of A, C, and L
+
+# Sampling helpers
 def sample_stable_A(
     d_x: int,
     rho_min: float,
@@ -47,7 +48,7 @@ def sample_stable_A(
     """
     Sample A ∈ R^{d_x, d_x} and rescale so its spectral radius lies in [rho_min, rho_max].
     """
-    A_raw = rng.normal(size=(d_x, d_x))  
+    A_raw = rng.normal(size=(d_x, d_x))
     rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
     rho_target = rng.uniform(rho_min, rho_max)
     return (rho_target / (rho_raw + 1e-12)) * A_raw
@@ -63,10 +64,9 @@ def sample_stable_A_identity_centered(
 ) -> np.ndarray:
     """
     Sample A_raw = beta * I + noise_scale * Z, where Z has i.i.d. standard normal
-    entries, then rescale such that the spectral radius (rho(A)) lies within [rho_min, rho_max].
+    entries, then rescale so rho(A) lies within [rho_min, rho_max].
     """
-    
-    Z  = rng.normal(size=(d_x, d_x))
+    Z = rng.normal(size=(d_x, d_x))
     A_raw = beta * np.eye(d_x) + noise_scale * Z
 
     rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
@@ -74,6 +74,7 @@ def sample_stable_A_identity_centered(
 
     A = (rho_target / (rho_raw + 1e-12)) * A_raw
     return A
+
 
 def sample_C(d_y: int, d_x: int, rng: np.random.Generator) -> np.ndarray:
     """Sample observation matrix C ∈ R^{d_y, d_x}."""
@@ -86,10 +87,10 @@ def sample_L(d_x: int, d_y: int, rng: np.random.Generator) -> np.ndarray:
 
 
 
-# Impulse-response distance across realizations
+# Impulse-response diagnostics
 def impulse_response_matrices(A: np.ndarray, C: np.ndarray, L: np.ndarray, K: int):
     """
-    Returns [H_1, ..., H_K] where H_k = C A^{k-1} L.
+    Return [H_1, ..., H_K] where H_k = C A^{k-1} L.
     """
     d_x = A.shape[0]
     Ak = np.eye(d_x)
@@ -128,7 +129,7 @@ def impulse_response_distance(
     return num / (den + 1e-12) if normalize else num
 
 
-# Simulation wrapper
+
 def simulate_y_only(
     n: int,
     A: np.ndarray,
@@ -142,66 +143,44 @@ def simulate_y_only(
     Assumes simulate_lds returns (x, y, e), so y is index 1.
     """
     out = simulate_lds(n, A, C, L, rng, e_scale)
-    return out[1] if isinstance(out, tuple) else out     # y ∈ R^{n, d_y}  
+    return out[1] if isinstance(out, tuple) else out
 
 
-# Fit VAR(p) and return objects needed for Mahalanobis metric
+# VAR fit helper
 def fit_var_and_components(y: np.ndarray, p: int):
     """
     Fit a VAR(p) model via least squares and return the components needed
-    for the Mahal. distance between VAR parameter vectors.
+    for the Mahalanobis distance between VAR parameter vectors.
 
-    Parameters:                 |   Returns:                                     |    Internal Shapes:
-                                |                                                |    
-    y: np.ndarray               |   pi_hat:    np.ndarray                        |    X      ∈ R^{T x (p d_y)}
-       observed time series     |              vectorized CAR coeff. (Phi)       |    
-       shape - (n, d_y)         |              ∈ R^{(p * d_y^2), 1}              |    Y      ∈ R^{T x d_y}
-                                |                                                |   
-    p: int                      |   Sigma_hat: np.ndarray                        |    B_hat  ∈ R^{(p * d_y) x d_y}
-       VAR order                |              residual covariance matrix        |
-       i.e., number of lags     |              ∈ R^{d_y, d_y}                    |    U_hat  ∈ R^{T x d_y}
-                                |              = (U^T @ U) / T                   |    
-                                |                                                |    Phi_i  ∈ R^{d_y x d_y}
-                                |   QX_hat:    np.ndarray                        |
-                                |              regressor covariance matrix       |    T      = n - p
-                                |              ∈ R^{(p * d_y),(p * d_y)}         |
-                                |              = (X^T @ X) / T                   |
+    Returns
+    -------
+    pi_hat : np.ndarray
+        Vectorized VAR coefficients, shape ((p * d_y^2),)
+    Sigma_hat : np.ndarray
+        Residual covariance matrix, shape (d_y, d_y)
+    QX_hat : np.ndarray
+        Regressor covariance matrix, shape ((p * d_y), (p * d_y))
     """
-
     X, Y = build_var_xy(y, p=p)
-    # X ∈ R^{T x (p d_y)}, Y ∈ R^{T x d_y}
+    T_eff = X.shape[0]
 
-    T = X.shape[0] # T = n - p
-    if T <= 0:
-        raise ValueError(f"Empty VAR design matrix: got T={T}. Increase n or decrease p.")
+    if T_eff <= 0:
+        raise ValueError(f"Empty VAR design matrix: got T={T_eff}. Increase n or decrease p.")
 
-    B_hat = fit_ls(Y, X)              # ∈ R^{(p * d_y) x d_y}
-    U_hat = Y - X @ B_hat             # ∈ R^{T x d_y}
+    B_hat = fit_ls(Y, X)
+    U_hat = Y - X @ B_hat
 
-    Sigma_hat = (U_hat.T @ U_hat) / T # ∈ R^{d_y, d_y}
-    QX_hat = (X.T @ X) / T            # ∈ R^{(p * d_y),(p * d_y)}
-
-
-    #QX_hat = np.einsum('ti,tj->ij', X, X) / T
+    Sigma_hat = (U_hat.T @ U_hat) / T_eff
+    QX_hat = (X.T @ X) / T_eff
 
     d_y = Y.shape[1]
-    Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y) # list of p matrices, each Phi_i ∈ R^{d_y, d_y}
+    Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y)
+    pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list])
 
-    pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list]) # ∈ R^{(p * d_y^2), 1}
     return pi_hat, Sigma_hat, QX_hat
 
 
-
-
-
-
-
-
-
-
-
-
-# Main experiment: realization sensitivity
+# Core experiment: fixed realizations, repeated Monte Carlo trials
 def run_realization_sensitivity(
     regime_name: str,
     rho_min: float,
@@ -209,12 +188,12 @@ def run_realization_sensitivity(
     realizations: int = 5,
     trials: int = 120,
     n: int = 1500,
-    p: int = 10,
+    p: int = 2,
     d_x: int = 5,
     d_y: int = 5,
     e_scale: float = 0.2,
     seed: int = 0,
-    diff_regime_y3: tuple[float, float] | None = None, 
+    diff_regime_y3: tuple[float, float] | None = None,
     diff_regime_y4: tuple[float, float] | None = None,
     K_ir: int = 25,
 ):
@@ -227,90 +206,78 @@ def run_realization_sensitivity(
 
     DIFFERENT condition:
         y3 vs y4 from two independently sampled LDS realizations
-        (no reuse of y1)
 
-    If diff_regime is None:
-        y3 and y4 are both drawn from the same regime [rho_min, rho_max].
-
-    If diff_regime is not None:
+    If diff_regime_y3 is None:
         y3 is drawn from [rho_min, rho_max]
-        y4 is drawn from diff_regime
+
+    If diff_regime_y4 is None:
+        y4 is drawn from [rho_min, rho_max]
     """
     rng = np.random.default_rng(seed)
 
     all_same_M, all_diff_M = [], []
 
-    
-
     print(f"\n--- Regime: {regime_name}  rho in [{rho_min}, {rho_max}] ---\n")
 
     systems: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-
     diff_pairs: list[
         tuple[
             tuple[np.ndarray, np.ndarray, np.ndarray],
             tuple[np.ndarray, np.ndarray, np.ndarray]
-
         ]
     ] = []
 
     for r in range(realizations):
         print(f"Realization {r+1}/{realizations}")
 
-        # Fixed realization for SAME comparisons in this outer loop
-        A = sample_stable_A(d_x, rho_min, rho_max, rng)              # A: (d_x, d_x)
-        C = sample_C(d_y, d_x, rng)                                  # C: (d_y, d_x)
-        L = sample_L(d_x, d_y, rng)                                  # L: (d_x, d_y)
+        A = sample_stable_A(d_x, rho_min, rho_max, rng)
+        C = sample_C(d_y, d_x, rng)
+        L = sample_L(d_x, d_y, rng)
 
-        # System for y3
         if diff_regime_y3 is None:
             rho_min3, rho_max3 = rho_min, rho_max
         else:
             rho_min3, rho_max3 = diff_regime_y3
 
+        A3 = sample_stable_A(d_x, rho_min3, rho_max3, rng)
+        C3 = sample_C(d_y, d_x, rng)
+        L3 = sample_L(d_x, d_y, rng)
 
-        A3 = sample_stable_A(d_x, rho_min3, rho_max3, rng)           # A3: (d_x, d_x)
-        C3 = sample_C(d_y, d_x, rng)                                 # C3: (d_y, d_x)
-        L3 = sample_L(d_x, d_y, rng)                                 # L3: (d_x, d_y)
-
-        # System for y4
         if diff_regime_y4 is None:
             rho_min4, rho_max4 = rho_min, rho_max
         else:
             rho_min4, rho_max4 = diff_regime_y4
 
-        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)   # A4: (d_x, d_x)
-        C4 = sample_C(d_y, d_x, rng)                                           # C4: (d_y, d_x)
-        L4 = sample_L(d_x, d_y, rng)                                           # L4: (d_x, d_y)
+        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)
+        C4 = sample_C(d_y, d_x, rng)
+        L4 = sample_L(d_x, d_y, rng)
 
         systems.append((A, C, L))
         diff_pairs.append(((A3, C3, L3), (A4, C4, L4)))
 
-        D_same_M, D_diff_M = [], [] # vectors of scalars to be populated / appended below 
+        D_same_M, D_diff_M = [], []
         cond_QX_list = []
 
         for _ in range(trials):
-            
-            # SAME LDS: y1 vs y2 from the same fixed system
-            y1 = simulate_y_only(n, A, C, L, rng, e_scale)   # y1: (n, d_y)
-            y2 = simulate_y_only(n, A, C, L, rng, e_scale)   # y2: (n, d_y)
+            # SAME
+            y1 = simulate_y_only(n, A, C, L, rng, e_scale)
+            y2 = simulate_y_only(n, A, C, L, rng, e_scale)
 
-            pi1, Sigma1, QX1 = fit_var_and_components(y1, p) 
-            pi2, Sigma2, QX2 = fit_var_and_components(y2, p) # pi2: (p * d, y^2), Sigma2: (d_y, d_y), QX2: (p * d_y, p * d_y)
+            pi1, Sigma1, QX1 = fit_var_and_components(y1, p)
+            pi2, Sigma2, QX2 = fit_var_and_components(y2, p)
 
             cond_QX_list.append(np.linalg.cond(QX1))
             cond_QX_list.append(np.linalg.cond(QX2))
 
-            d_same = mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2) # scalar distance
+            d_same = mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2)
             D_same_M.append(d_same)
 
-            
-            # DIFFERENT LDS: y3 vs y4 from two fixed but distinct and independent LDS realizations 
-            y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale) # y3: (n, d_y)
-            y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale) # y4: (n, d_y)
+            # DIFFERENT
+            y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale)
+            y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale)
 
-            pi3, Sigma3, QX3 = fit_var_and_components(y3, p) # pi3: (p * d, y^2), Sigma3: (d_y, d_y), QX3: (p * d_y, p * d_y)
-            pi4, Sigma4, QX4 = fit_var_and_components(y4, p) # pi4: (p * d, y^2), Sigma4: (d_y, d_y), QX4: (p * d_y, p * d_y)
+            pi3, Sigma3, QX3 = fit_var_and_components(y3, p)
+            pi4, Sigma4, QX4 = fit_var_and_components(y4, p)
 
             cond_QX_list.append(np.linalg.cond(QX3))
             cond_QX_list.append(np.linalg.cond(QX4))
@@ -318,7 +285,6 @@ def run_realization_sensitivity(
             d_diff = mahalanobis_var_distance(pi3, pi4, Sigma3, Sigma4, QX3, QX4)
             D_diff_M.append(d_diff)
 
-        # Realization summary
         print("  Mahalanobis same mean:", float(np.mean(D_same_M)))
         print("  Mahalanobis same std:", float(np.std(D_same_M, ddof=1)))
         print("  Mahalanobis diff mean:", float(np.mean(D_diff_M)))
@@ -349,10 +315,7 @@ def run_realization_sensitivity(
         all_same_M.append(D_same_M)
         all_diff_M.append(D_diff_M)
 
-    
-    # Pairwise IR distances across fixed outer-loop realizations
     ir_dists: list[float] = []
-
     for i in range(len(systems)):
         A1, C1, L1 = systems[i]
         for j in range(i + 1, len(systems)):
@@ -373,7 +336,6 @@ def run_realization_sensitivity(
         )
 
     diff_ir_dists: list[float] = []
-
     for r in range(len(diff_pairs)):
         (A3, C3, L3), (A4, C4, L4) = diff_pairs[r]
         d_ir_diff = impulse_response_distance(
@@ -394,18 +356,19 @@ def run_realization_sensitivity(
             f"mean={np.mean(diff_ir_arr):.4g}, std={std:.4g}, "
             f"min={np.min(diff_ir_arr):.4g}, max={np.max(diff_ir_arr):.4g}"
         )
-        
+
     return all_same_M, all_diff_M, ir_dists, diff_ir_dists, systems, diff_pairs
 
 
-def run_p_sweep(
-    p_values,
+# T-sweep
+def run_T_sweep(
+    T_values,
     regime_name: str,
     rho_min: float,
     rho_max: float,
     realizations: int = 25,
     trials: int = 40,
-    n: int = 1500,
+    p: int = 2,
     d_x: int = 5,
     d_y: int = 5,
     e_scale: float = 0.2,
@@ -416,13 +379,18 @@ def run_p_sweep(
     best_by: str = "f1",
 ):
     """
-    Sweep over VAR orders p and record pooled classification performance.
+    Sweep over effective sample sizes T = n - p while fixing p.
+
+    For each T in T_values, set n = T + p and record pooled
+    classification performance.
     """
     sweep_results = []
 
-    for p in p_values:
+    for T in T_values:
+        n = T + p
+
         print("\n" + "=" * 70)
-        print(f"Running p-sweep experiment for p = {p}")
+        print(f"Running T-sweep experiment for T = {T} (n = {n}, p = {p})")
         print("=" * 70)
 
         same_M, diff_M, ir_dists, diff_ir_dists, systems, diff_pairs = run_realization_sensitivity(
@@ -452,12 +420,14 @@ def run_p_sweep(
         best = summary["best"]
 
         row = {
+            "T": T,
+            "n": n,
             "p": p,
             "auc": summary["auc"],
             "best_threshold": best["threshold"],
             "accuracy": best["accuracy"],
             "precision": best["precision"],
-            "recall": best["recall"],        # TPR
+            "recall": best["recall"],
             "specificity": best["specificity"],
             "fpr": best["fpr"],
             "fnr": best["fnr"],
@@ -470,7 +440,7 @@ def run_p_sweep(
 
         sweep_results.append(row)
 
-        print("\nSummary for p =", p)
+        print(f"\nSummary for T = {T} (n = {n}, p = {p})")
         print(f"  AUC            = {row['auc']:.6f}")
         print(f"  Best threshold = {row['best_threshold']:.6f}")
         print(f"  Accuracy       = {row['accuracy']:.6f}")
@@ -483,11 +453,12 @@ def run_p_sweep(
 
     return sweep_results
 
-def plot_p_sweep_results(sweep_results):
+
+def plot_T_sweep_results(sweep_results):
     """
-    Plot key classification metrics as functions of VAR order p.
+    Plot key classification metrics as functions of effective sample size T.
     """
-    p_vals = np.array([r["p"] for r in sweep_results], dtype=int)
+    T_vals = np.array([r["T"] for r in sweep_results], dtype=int)
     auc_vals = np.array([r["auc"] for r in sweep_results], dtype=float)
     f1_vals = np.array([r["f1"] for r in sweep_results], dtype=float)
     fpr_vals = np.array([r["fpr"] for r in sweep_results], dtype=float)
@@ -496,64 +467,63 @@ def plot_p_sweep_results(sweep_results):
     thresh_vals = np.array([r["best_threshold"] for r in sweep_results], dtype=float)
 
     plt.figure(figsize=(7, 4))
-    plt.plot(p_vals, auc_vals, marker="o", linewidth=2)
-    plt.xlabel("VAR order p")
+    plt.plot(T_vals, auc_vals, marker="o", linewidth=2)
+    plt.xlabel("Effective sample size T = n - p")
     plt.ylabel("AUC")
-    plt.title("AUC vs VAR order p")
+    plt.title("AUC vs effective sample size T")
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.show()
 
     plt.figure(figsize=(7, 4))
-    plt.plot(p_vals, f1_vals, marker="o", linewidth=2, label="F1")
-    plt.plot(p_vals, tpr_vals, marker="o", linewidth=2, label="TPR")
-    plt.plot(p_vals, 1 - fpr_vals, marker="o", linewidth=2, label="TNR")
-    plt.xlabel("VAR order p")
+    plt.plot(T_vals, f1_vals, marker="o", linewidth=2, label="F1")
+    plt.plot(T_vals, tpr_vals, marker="o", linewidth=2, label="TPR")
+    plt.plot(T_vals, 1 - fpr_vals, marker="o", linewidth=2, label="TNR")
+    plt.xlabel("Effective sample size T = n - p")
     plt.ylabel("Score")
-    plt.title("Classification metrics vs VAR order p")
+    plt.title("Classification metrics vs effective sample size T")
     plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
     plt.figure(figsize=(7, 4))
-    plt.plot(p_vals, fpr_vals, marker="o", linewidth=2, label="FPR")
-    plt.plot(p_vals, fnr_vals, marker="o", linewidth=2, label="FNR")
-    plt.plot(p_vals, tpr_vals, marker="o", linewidth=2, linestyle="--", label="TPR")
-    plt.xlabel("VAR order p")
+    plt.plot(T_vals, fpr_vals, marker="o", linewidth=2, label="FPR")
+    plt.plot(T_vals, fnr_vals, marker="o", linewidth=2, label="FNR")
+    plt.plot(T_vals, tpr_vals, marker="o", linewidth=2, linestyle="--", label="TPR")
+    plt.xlabel("Effective sample size T = n - p")
     plt.ylabel("Rate")
-    plt.title("Error Rates vs VAR order p")
+    plt.title("Error rates vs effective sample size T")
     plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
     plt.figure(figsize=(7, 4))
-    plt.plot(p_vals, thresh_vals, marker="o", linewidth=2)
-    plt.xlabel("VAR order p")
+    plt.plot(T_vals, thresh_vals, marker="o", linewidth=2)
+    plt.xlabel("Effective sample size T = n - p")
     plt.ylabel("Best threshold")
-    plt.title("Best threshold vs VAR order p")
+    plt.title("Best threshold vs effective sample size T")
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.show()
-
-
 
 
 if __name__ == "__main__":
 
-    p_values = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    T_values = [100, 200, 300, 500, 800, 1000, 1200, 1500, 2000, 2500, 3000, 3500, 4000, 5000]
+    p_fixed = 2
 
-    sweep_results = run_p_sweep(
-        p_values=p_values,
+    sweep_results = run_T_sweep(
+        T_values=T_values,
         regime_name="short (within-regime diff)",
         rho_min=0.75,
         rho_max=0.85,
         realizations=25,
         trials=40,
-        n=1500,
+        p=p_fixed,
         d_x=5,
-        d_y=5, # increase observation (2-10) 
+        d_y=5,
         e_scale=0.2,
         seed=0,
         diff_regime_y3=(0.3, 0.4),
@@ -563,11 +533,12 @@ if __name__ == "__main__":
     )
 
     print("\n" + "=" * 70)
-    print("P-SWEEP SUMMARY TABLE")
+    print("T-SWEEP SUMMARY TABLE")
     print("=" * 70)
     for row in sweep_results:
         print(
-            f"p={row['p']:>2d} | "
+            f"T={row['T']:>4d} | "
+            f"n={row['n']:>4d} | "
             f"AUC={row['auc']:.4f} | "
             f"F1={row['f1']:.4f} | "
             f"TPR={row['recall']:.4f} | "
@@ -575,4 +546,4 @@ if __name__ == "__main__":
             f"tau*={row['best_threshold']:.4f}"
         )
 
-    plot_p_sweep_results(sweep_results)
+    plot_T_sweep_results(sweep_results)
