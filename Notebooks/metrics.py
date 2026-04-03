@@ -154,6 +154,15 @@ def phi_distance_between_models(Phi1, Phi2, *, squared: bool = True, average: bo
     return total
 
 
+def isotropic_var_distance(
+    pi1_hat: np.ndarray,
+    pi2_hat: np.ndarray,
+) -> float:
+       
+    delta = pi1_hat - pi2_hat
+
+    return float(delta.T @ delta)
+
 
 
 def mahalanobis_var_distance(

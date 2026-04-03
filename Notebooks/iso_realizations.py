@@ -4,7 +4,7 @@ from scipy.stats import gaussian_kde
 
 from lds import simulate_lds
 from var_model import build_var_xy, fit_ls, unpack_B_to_Phi
-from metrics import mahalanobis_var_distance
+from metrics import isotropic_var_distance
 
 from evaluate_H0 import evaluate_H0, print_H0_summary
 from evaluate_H1 import evaluate_H1, print_H1_summary
@@ -85,7 +85,21 @@ def sample_C(d_y: int, d_x: int, rng: np.random.Generator) -> np.ndarray:
 
 def sample_L(d_x: int, d_y: int, rng: np.random.Generator) -> np.ndarray:
     """Sample noise injection matrix L ∈ R^{d_x, d_y}."""
-    return rng.normal(size=(d_x, d_y))
+    #return np.eye(d_x, d_y)
+    return rng.normal(size=(d_x, d_y))  
+
+def sample_L_anisotropic(
+        d_x: int,
+        d_y: int,
+        rng: np.random.Generator,
+        strength_min: float = 0.05,
+        strength_max: float = 2.5,
+) -> np.ndarray:
+    
+    L = rng.normal(size=(d_x, d_y))
+    scales = rng.uniform(strength_min, strength_max, size=d_y)
+    return L @ np.diag(scales)
+
 
 
 
@@ -148,7 +162,7 @@ def simulate_y_only(
     return out[1] if isinstance(out, tuple) else out     # y ∈ R^{n, d_y}  
 
 
-# Fit VAR(p) and return objects needed for Mahalanobis metric
+# Fit VAR(p) and return objects needed for isotropic metric
 def fit_var_and_components(y: np.ndarray, p: int):
     """
     Fit a VAR(p) model via least squares and return the components needed
@@ -181,17 +195,13 @@ def fit_var_and_components(y: np.ndarray, p: int):
     B_hat = fit_ls(Y, X)              # ∈ R^{(p * d_y) x d_y}
     U_hat = Y - X @ B_hat             # ∈ R^{T x d_y}
 
-    Sigma_hat = (U_hat.T @ U_hat) / T # ∈ R^{d_y, d_y}
-    QX_hat = (X.T @ X) / T            # ∈ R^{(p * d_y),(p * d_y)}
 
-
-    #QX_hat = np.einsum('ti,tj->ij', X, X) / T
 
     d_y = Y.shape[1]
     Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y) # list of p matrices, each Phi_i ∈ R^{d_y, d_y}
 
     pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list]) # ∈ R^{(p * d_y^2), 1}
-    return pi_hat, Sigma_hat, QX_hat
+    return pi_hat
 
 
 
@@ -254,7 +264,7 @@ def plot_kde_per_realization(same_list, diff_list, tau=None):
         plt.plot(x, ys_diff, label="Different KDE", linewidth=2)
 
         plt.title(f"Probability Distribution Comparison: Realization {i+1}")
-        plt.xlabel("Mahalanobis Distance")
+        plt.xlabel("isotropic Distance")
         plt.ylabel("Probability Density")
         if tau is not None:
             plt.axvline(tau, color='red', linestyle="--", linewidth=1.5, label=r"$\tau$")
@@ -280,7 +290,7 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
     if xlim is None:
         lo, hi = np.quantile(all_vals, [0.001, 0.999])
         xs = np.linspace(lo, hi, gridsize)
-        plt.xlim(0, 1000)
+        plt.xlim(0, 10000)
     else:
         xs = np.linspace(xlim[0], xlim[1], gridsize)
         plt.xlim(xlim[0], xlim[1])
@@ -298,7 +308,7 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
         plt.plot(xs, ys, alpha=0.75, label=f"Realization {i+1}")
 
     plt.title(title)
-    plt.xlabel("Mahalanobis Distance")
+    plt.xlabel("isotropic Distance")
     plt.ylabel("Estimated Density")
     plt.grid(alpha=0.3)
     if tau is not None:
@@ -407,6 +417,8 @@ def run_realization_sensitivity(
 
     all_same_M, all_diff_M = [], []
 
+    all_same_delta_pi = []
+    all_diff_delta_pi = []
     
 
     print(f"\n--- Regime: {regime_name}  rho in [{rho_min}, {rho_max}] ---\n")
@@ -427,7 +439,7 @@ def run_realization_sensitivity(
         # Fixed realization for SAME comparisons in this outer loop
         A = sample_stable_A(d_x, rho_min, rho_max, rng)              # A: (d_x, d_x)
         C = sample_C(d_y, d_x, rng)                                  # C: (d_y, d_x)
-        L = sample_L(d_x, d_y, rng)                                  # L: (d_x, d_y)
+        L = sample_L(d_x, d_y, rng)                      # L: (d_x, d_y)
 
         # System for y3
         if diff_regime_y3 is None:
@@ -438,7 +450,7 @@ def run_realization_sensitivity(
 
         A3 = sample_stable_A(d_x, rho_min3, rho_max3, rng)           # A3: (d_x, d_x)
         C3 = sample_C(d_y, d_x, rng)                                 # C3: (d_y, d_x)
-        L3 = sample_L(d_x, d_y, rng)                                 # L3: (d_x, d_y)
+        L3 = sample_L(d_x, d_y, rng)                     # L3: (d_x, d_y)
 
         # System for y4
         if diff_regime_y4 is None:
@@ -448,7 +460,7 @@ def run_realization_sensitivity(
 
         A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)   # A4: (d_x, d_x)
         C4 = sample_C(d_y, d_x, rng)                                           # C4: (d_y, d_x)
-        L4 = sample_L(d_x, d_y, rng)                                           # L4: (d_x, d_y)
+        L4 = sample_L(d_x, d_y, rng)                               # L4: (d_x, d_y)
 
         systems.append((A, C, L))
         diff_pairs.append(((A3, C3, L3), (A4, C4, L4)))
@@ -462,13 +474,13 @@ def run_realization_sensitivity(
             y1 = simulate_y_only(n, A, C, L, rng, e_scale)   # y1: (n, d_y)
             y2 = simulate_y_only(n, A, C, L, rng, e_scale)   # y2: (n, d_y)
 
-            pi1, Sigma1, QX1 = fit_var_and_components(y1, p) 
-            pi2, Sigma2, QX2 = fit_var_and_components(y2, p) # pi2: (p * d, y^2), Sigma2: (d_y, d_y), QX2: (p * d_y, p * d_y)
+            pi1 = fit_var_and_components(y1, p) # pi1: (p * d_y^2, 1)
+            pi2 = fit_var_and_components(y2, p) # pi2: (p * d_y^2, 1)
 
-            cond_QX_list.append(np.linalg.cond(QX1))
-            cond_QX_list.append(np.linalg.cond(QX2))
+            all_same_delta_pi.append((pi1 - pi2).ravel())
 
-            d_same = mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2) # scalar distance
+
+            d_same = isotropic_var_distance(pi1, pi2) # scalar distance
             D_same_M.append(d_same)
 
             
@@ -476,20 +488,20 @@ def run_realization_sensitivity(
             y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale) # y3: (n, d_y)
             y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale) # y4: (n, d_y)
 
-            pi3, Sigma3, QX3 = fit_var_and_components(y3, p) # pi3: (p * d, y^2), Sigma3: (d_y, d_y), QX3: (p * d_y, p * d_y)
-            pi4, Sigma4, QX4 = fit_var_and_components(y4, p) # pi4: (p * d, y^2), Sigma4: (d_y, d_y), QX4: (p * d_y, p * d_y)
+            pi3 = fit_var_and_components(y3, p) # pi3: (p * d, y^2)
+            pi4 = fit_var_and_components(y4, p) # pi4: (p * d, y^2)
 
-            cond_QX_list.append(np.linalg.cond(QX3))
-            cond_QX_list.append(np.linalg.cond(QX4))
+            all_diff_delta_pi.append((pi3 - pi4).ravel())
 
-            d_diff = mahalanobis_var_distance(pi3, pi4, Sigma3, Sigma4, QX3, QX4)
+
+            d_diff = isotropic_var_distance(pi3, pi4)
             D_diff_M.append(d_diff)
 
         # Realization summary
-        print("  Mahalanobis same mean:", float(np.mean(D_same_M)))
-        print("  Mahalanobis same std:", float(np.std(D_same_M, ddof=1)))
-        print("  Mahalanobis diff mean:", float(np.mean(D_diff_M)))
-        print("  Mahalanobis diff std:", float(np.std(D_diff_M, ddof=1)))
+        print("  isotropic same mean:", float(np.mean(D_same_M)))
+        print("  isotropic same std:", float(np.std(D_same_M, ddof=1)))
+        print("  isotropic diff mean:", float(np.mean(D_diff_M)))
+        print("  isotropic diff std:", float(np.std(D_diff_M, ddof=1)))
 
         d_ir_pair = impulse_response_distance(
             A3, C3, L3,
@@ -499,9 +511,7 @@ def run_realization_sensitivity(
         )
         print("  IR distance of fixed DIFF pair:", d_ir_pair)
 
-        cond_arr = np.array(cond_QX_list)
-        print("  QX condition number (median):", np.median(cond_arr))
-        print("  QX condition number (max):", np.max(cond_arr))
+
 
         same = np.asarray(D_same_M)
         diff = np.asarray(D_diff_M)
@@ -562,6 +572,27 @@ def run_realization_sensitivity(
             f"min={np.min(diff_ir_arr):.4g}, max={np.max(diff_ir_arr):.4g}"
         )
         
+    if len(all_same_delta_pi) > 0:
+        same_delta_arr = np.asarray(all_same_delta_pi)
+        same_var_per_coord = np.var(same_delta_arr, axis=0)
+
+        print("\nSAME Δπ coordinate variance summary:")
+        print("  min:", float(np.min(same_var_per_coord)))
+        print("  median:", float(np.median(same_var_per_coord)))
+        print("  max:", float(np.max(same_var_per_coord)))
+        print("  max/min ratio:", float(np.max(same_var_per_coord) / (np.min(same_var_per_coord) + 1e-12)))
+
+    if len(all_diff_delta_pi) > 0:
+        diff_delta_arr = np.asarray(all_diff_delta_pi)
+        diff_var_per_coord = np.var(diff_delta_arr, axis=0)
+
+        print("\nDIFF Δπ coordinate variance summary:")
+        print("  min:", float(np.min(diff_var_per_coord)))
+        print("  median:", float(np.median(diff_var_per_coord)))
+        print("  max:", float(np.max(diff_var_per_coord)))
+        print("  max/min ratio:", float(np.max(diff_var_per_coord) / (np.min(diff_var_per_coord) + 1e-12)))
+
+
     return all_same_M, all_diff_M, ir_dists, diff_ir_dists, systems, diff_pairs
 
 
@@ -715,7 +746,7 @@ if __name__ == "__main__":
         realizations=25,
         trials=40,
         n=1500,
-        p=2,
+        p=10,
         d_x=5,
         d_y=5,
         e_scale=0.2,
@@ -748,21 +779,21 @@ if __name__ == "__main__":
     # KDE overlays across realizations
     plot_kde_overlay(
         same_M,
-        "Mahalanobis SAME KDE across realizations (short)",
+        "isotropic SAME KDE across realizations (short)",
         bw_method="silverman",
-        tau=57.308373
+        tau=154.1578
 
     )
 
     plot_kde_overlay(
         diff_M,
-        "Mahalanobis DIFFERENT KDE across realizations (short)",
+        "isotropic DIFFERENT KDE across realizations (short)",
         bw_method="silverman",
-        tau=57.308373
+        tau=154.1578
     )
 
     # Per-realization SAME vs DIFFERENT KDE
-    plot_kde_per_realization(same_M, diff_M, tau=57.308373)
+    plot_kde_per_realization(same_M, diff_M, tau=154.1578)
 
 
 
@@ -776,7 +807,7 @@ if __name__ == "__main__":
         make_plots=True
     )
 
-    tau = 57.308373
+    tau = 154.1578
 
     summary = evaluate_H0(same_M, tau)
     print_H0_summary(summary)

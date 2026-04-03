@@ -511,7 +511,7 @@ def plot_T_sweep_results(sweep_results):
 
 if __name__ == "__main__":
 
-    T_values = [100, 200, 300, 500, 800, 1000, 1200, 1500, 2000, 2500, 3000, 3500, 4000, 5000]
+    T_values = [100, 200, 300, 500, 800, 1000, 1200, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 7000]
     p_fixed = 2
 
     sweep_results = run_T_sweep(

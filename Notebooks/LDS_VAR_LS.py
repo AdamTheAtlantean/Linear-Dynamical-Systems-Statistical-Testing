@@ -12,7 +12,7 @@ Pipeline:
 import numpy as np
 import matplotlib.pyplot as plt
 
-# 1)  -------------------------- Simulate the LDS --------------------------
+# 1)  Simulate the LDS 
 
 def simulate_lds (n, A, C, L, rng, e_scale=0.2):
     """
@@ -49,7 +49,7 @@ def simulate_lds (n, A, C, L, rng, e_scale=0.2):
 
 
 
-# 2)  -------------------------- Build the VAR(p) Design Matrices (i.e., Y = XB) --------------------------
+# 2)  Build the VAR(p) Design Matrices (i.e., Y = XB)
 
 def build_var_xy(y, p):
     """
@@ -138,7 +138,7 @@ def plot_variance_of_phi_error_across_lags(
         rhos_this_target = []
 
         for _ in range(trials):
-            # --- resample C,L until rho(A-LC) <= target ---
+            # resample C,L until rho(A-LC) <= target
             for _try in range(max_tries):
                 C = rng.normal(size=(d_y, d_x))
                 L = rng.normal(size=(d_x, d_y))
@@ -172,7 +172,7 @@ def plot_variance_of_phi_error_across_lags(
         var_across_lags_stds.append(np.std(vars_this_target))
         achieved_rhos.append(np.mean(rhos_this_target))
 
-    # --- plot mean ± std ---
+    # plot mean plus/minus std
     x = np.arange(len(targets))
     plt.figure()
     plt.errorbar(x, var_across_lags_means, yerr=var_across_lags_stds, marker='o', capsize=4)
@@ -228,7 +228,7 @@ def p_sensitivity_report(
                 return C, L, F, rhoF
         raise RuntimeError(f"Couldn't sample C,L with rho in [{rho_low}, {rho_high}] after {max_tries} tries.")
 
-    print("\n====================== p SENSITIVITY REPORT ======================")
+    print('=' * 20, "p SENSITIVITY REPORT ", '=' * 20)
     print(f"trials={trials}, n={n}, d_y={d_y}, e_scale={e_scale}")
     print("p_list =", list(p_list))
     print("regimes =", regimes)
@@ -448,7 +448,7 @@ def main():
 
 
     # Comparing variance of different spectral radii (i.e., .80 vs .98, short term vs long term memory respectively)
-    #plot_variance_of_phi_error_across_lags(targets=(0.80, 0.98), trials=30, p=10)
+    # plot_variance_of_phi_error_across_lags(targets=(0.80, 0.98), trials=30, p=10)
 
     p_sensitivity_report(
     p_list=(8, 10, 12),
@@ -458,7 +458,7 @@ def main():
 
 
 
-    # --------- Compare Phi_hat_i to theoretical Phi_i = C (A-LC)^(i-1) L ---------
+    # Compare Phi_hat_i to theoretical Phi_i = C (A-LC)^(i-1) L 
 
     F = A - L @ C
     Fpow = np.eye(d_x)   # (A-LC)^(i-1), starts at power 0

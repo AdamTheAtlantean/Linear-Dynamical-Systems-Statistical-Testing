@@ -16,11 +16,10 @@ def fit_var_and_get_phi(y: np.ndarray, p: int):
 
 def main():
 
-    # -------------------- global settings --------------------
     seed = 0
     rng = np.random.default_rng(seed)
 
-    trials = 300      # increase for smoother KDEs (200–1000 are typical)
+    trials = 300      # increase for smoother KDEs (200–1000 is typical)
     n = 1500
     d_x = 2
     d_y = 5
@@ -34,12 +33,12 @@ def main():
     same_mode_band  = (0.75, 0.80)   # same-LDS case uses this band for its ONE sampled model
     other_mode_band = (0.95, 0.98)   # different-modes case samples a second model from this band
 
-    # -------------------- collect distances --------------------
+    #  collect distances 
     D_same = np.zeros(trials)
     D_diff = np.zeros(trials)
 
     for t in range(trials):
-        # ===== Case 1: SAME LDS model (same A,C,L; different noise) =====
+        # Case 1: SAME LDS model (same A,C,L; different noise) 
         C, L, _, _ = sample_CL_in_band(
             A=A, d_x=d_x, d_y=d_y,
             rho_low=same_mode_band[0], rho_high=same_mode_band[1],
@@ -55,7 +54,7 @@ def main():
         # no 1/p, squared Frobenius norm summed over lags
         D_same[t] = phi_distance_between_models(Phi1, Phi2, squared=True, average=True)
 
-        # ===== Case 2: DIFFERENT LDS modes (different C,L which are sampled from different bands) =====
+        # Case 2: DIFFERENT LDS modes (different C,L which are sampled from different bands)
         C_a, L_a, _, _ = sample_CL_in_band(
             A=A, d_x=d_x, d_y=d_y,
             rho_low=same_mode_band[0], rho_high=same_mode_band[1],
@@ -75,8 +74,8 @@ def main():
 
         D_diff[t] = phi_distance_between_models(Phi_a, Phi_b, squared=True, average=True)
 
-    # -------------------- numeric summary --------------------
-    print("===== Task 3: Empirical distance distributions =====")
+    #numeric summary 
+    print("Empirical distance distributions")
     print(f"trials={trials}, n={n}, d_y={d_y}, p={p}, e_scale={e_scale}, seed={seed}")
     print(f"same_mode_band  = {same_mode_band}")
     print(f"other_mode_band = {other_mode_band}")
@@ -84,7 +83,7 @@ def main():
     print(f"D_same: mean={D_same.mean():.6g}, std={D_same.std(ddof=1):.6g}, median={np.median(D_same):.6g}")
     print(f"D_diff: mean={D_diff.mean():.6g}, std={D_diff.std(ddof=1):.6g}, median={np.median(D_diff):.6g}")
 
-    # -------------------- smooth density (KDE) plot --------------------
+    # smooth density (KDE) plot
     # Use a log-x plot for values which are heavyily tailed 
     use_log_x = True
 
@@ -119,7 +118,7 @@ def main():
     plt.tight_layout()
     plt.show()
 
-    # -------------------- overlay hist + KDE  --------------------
+    # overlay hist + KDE  
     plt.figure(figsize=(8, 4))
     plt.hist(D_same, bins=50, density=True, alpha=0.35, label="Same LDS (hist)")
     plt.hist(D_diff, bins=50, density=True, alpha=0.35, label="Different modes (hist)")

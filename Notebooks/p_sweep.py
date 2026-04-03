@@ -542,7 +542,7 @@ def plot_p_sweep_results(sweep_results):
 
 if __name__ == "__main__":
 
-    p_values = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    p_values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
     sweep_results = run_p_sweep(
         p_values=p_values,

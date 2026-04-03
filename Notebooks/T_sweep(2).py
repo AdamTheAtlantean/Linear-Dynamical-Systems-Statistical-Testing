@@ -711,8 +711,8 @@ if __name__ == "__main__":
 
 
     # Choose which experiment to run
-    RUN_SINGLE_SWEEP = True
-    RUN_REPEATED_SWEEP = False
+    RUN_SINGLE_SWEEP = False
+    RUN_REPEATED_SWEEP = True
 
     # Shared configuration
     T_values = [100, 200, 400, 600, 800, 1000, 1200, 1498]
