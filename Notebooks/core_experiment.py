@@ -2,131 +2,90 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 
-from lds import simulate_lds
-from var_model import build_var_xy, fit_ls, unpack_B_to_Phi
 from metrics import isotropic_var_distance
-
 from evaluate_H0 import evaluate_H0, print_H0_summary
 from evaluate_H1 import evaluate_H1, print_H1_summary
 from threshold import summarize_threshold_analysis
+from linalg_utils import spectral_radius, effective_F
+from sampling_utils import sample_system_with_F_in_band
+from lds import simulate_y_only
+from var_model import fit_var_and_components
 
 """
-Global dimension convensions:
+Global dimension conventions:
 1. n      = length of the observed time series
-2. T      = effictive VAR sample size, i.e., n - p
+2. T      = effective VAR sample size, i.e., n - p
 3. d_x    = latent state dimension
 4. d_y    = observation dimension
 5. p      = VAR order
 
-LDS objects:                                                                                                           
-1. A      ∈ R^{d_x, d_x}                                                                   
-2. C      ∈ R^{d_y, d_x}                                                
-3. L      ∈ R^{d_x, d_y}                                                           
-4. x_t    ∈ R^{d_x}                                                
-5. y_t    ∈ R^{d_y}                                                         
-6. e_t    ∈ R^{d_y}                          
+LDS objects:
+1. A      ∈ R^{d_x, d_x}
+2. C      ∈ R^{d_y, d_x}
+3. L      ∈ R^{d_x, d_y}
+4. x_t    ∈ R^{d_x}
+5. y_t    ∈ R^{d_y}
+6. e_t    ∈ R^{d_y}
 
-VAR(p) objects:     
+VAR(p) objects:
 1. X          ∈ R^{T, (p * d_y)}
 2. Y          ∈ R^{T, d_y}
 3. B_hat      ∈ R^{(p * d_y), d_y}
-4. U_hat      ∈ R^{T, d_y} 
-5. QX_hat     ∈ R^{(p * d_y), (p * d_y)}
-6. Sigma_hat  ∈ R^{d_y, d_y}
-7. pi_hat     ∈ R^{(p * (d_y)^2), 1}
+4. U_hat      ∈ R^{T, d_y}
+5. pi_hat     ∈ R^{(p * d_y^2),}
 
-IR response objects:
-1. A^k               ∈ R^{d_x, d_x}
-2. H_k = CA^{k-1}L   ∈ R^{d_y, d_y}
+Theory-aligned effective memory matrix:
+1. F = A - L C     ∈ R^{d_x, d_x}
+2. rho(F)          controls decay of the VAR coefficients
+3. Phi_i           = C F^{i-1} L
+4. H_k             = C F^{k-1} L
+
+Important numerical note:
+- We sample F first so that rho(F) lies in the requested band.
+- We then construct A = F + L C.
+- We reject only bad embeddings (C, L) for a fixed F before resampling F.
+- We also reject systems whose rho(A) is too large, so simulate_lds
+  remains numerically stable.
 """
 
-# Helpers: sampling new realizations of A, C, and L
-def sample_stable_A(
-    d_x: int,
-    rho_min: float,
-    rho_max: float,
-    rng: np.random.Generator
-) -> np.ndarray:
+
+# Impulse-response helpers (theory-aligned with F = A - L C)
+
+def impulse_response_matrices(
+    A: np.ndarray,
+    C: np.ndarray,
+    L: np.ndarray,
+    K: int,
+) -> list[np.ndarray]:
     """
-    Sample A ∈ R^{d_x, d_x} and rescale so its spectral radius lies in [rho_min, rho_max].
+    Returns [H_1, ..., H_K] where H_k = C F^{k-1} L and F = A - L C.
     """
-    A_raw = rng.normal(size=(d_x, d_x))  
-    rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
-    rho_target = rng.uniform(rho_min, rho_max)
-    return (rho_target / (rho_raw + 1e-12)) * A_raw
-
-
-def sample_stable_A_identity_centered(
-    d_x: int,
-    rho_min: float,
-    rho_max: float,
-    rng: np.random.Generator,
-    beta: float = 1.0,
-    noise_scale: float = 1.0,
-) -> np.ndarray:
-    """
-    Sample A_raw = beta * I + noise_scale * Z, where Z has i.i.d. standard normal
-    entries, then rescale such that the spectral radius (rho(A)) lies within [rho_min, rho_max].
-    """
-    
-    Z  = rng.normal(size=(d_x, d_x))
-    A_raw = beta * np.eye(d_x) + noise_scale * Z
-
-    rho_raw = np.max(np.abs(np.linalg.eigvals(A_raw)))
-    rho_target = rng.uniform(rho_min, rho_max)
-
-    A = (rho_target / (rho_raw + 1e-12)) * A_raw
-    return A
-
-def sample_C(d_y: int, d_x: int, rng: np.random.Generator) -> np.ndarray:
-    """Sample observation matrix C ∈ R^{d_y, d_x}."""
-    return rng.normal(size=(d_y, d_x))
-
-
-def sample_L(d_x: int, d_y: int, rng: np.random.Generator) -> np.ndarray:
-    """Sample noise injection matrix L ∈ R^{d_x, d_y}."""
-    return np.eye(d_x, d_y)
-    #return rng.normal(size=(d_x, d_y))  
-
-def sample_L_anisotropic(
-        d_x: int,
-        d_y: int,
-        rng: np.random.Generator,
-        strength_min: float = 0.05,
-        strength_max: float = 2.5,
-) -> np.ndarray:
-    
-    L = rng.normal(size=(d_x, d_y))
-    scales = rng.uniform(strength_min, strength_max, size=d_y)
-    return L @ np.diag(scales)
-
-
-
-
-# Impulse-response distance across realizations
-def impulse_response_matrices(A: np.ndarray, C: np.ndarray, L: np.ndarray, K: int):
-    """
-    Returns [H_1, ..., H_K] where H_k = C A^{k-1} L.
-    """
+    F = effective_F(A, C, L)
     d_x = A.shape[0]
-    Ak = np.eye(d_x)
+
+    Fk = np.eye(d_x)
     H = []
 
     for _ in range(K):
-        H.append(C @ Ak @ L)
-        Ak = Ak @ A
+        H.append(C @ Fk @ L)
+        Fk = Fk @ F
 
     return H
 
 
 def impulse_response_distance(
-    A1, C1, L1,
-    A2, C2, L2,
+    A1: np.ndarray,
+    C1: np.ndarray,
+    L1: np.ndarray,
+    A2: np.ndarray,
+    C2: np.ndarray,
+    L2: np.ndarray,
     K: int = 25,
-    normalize: bool = True
+    normalize: bool = True,
 ) -> float:
     """
     D_H = sum_{k=1..K} ||H_k^{(1)} - H_k^{(2)}||_F^2
+    where H_k = C (A - L C)^{k-1} L.
 
     If normalize=True, divide by sum_k ||H_k^{(1)}||_F^2.
     """
@@ -145,72 +104,48 @@ def impulse_response_distance(
     return num / (den + 1e-12) if normalize else num
 
 
-# Simulation wrapper
-def simulate_y_only(
-    n: int,
-    A: np.ndarray,
-    C: np.ndarray,
-    L: np.ndarray,
-    rng: np.random.Generator,
-    e_scale: float
-) -> np.ndarray:
+
+# Plotting helpers
+
+def compute_global_xlim(same_list, diff_list, lower_q=0.001, upper_q=0.999):
     """
-    Extract y from simulate_lds return.
-    Assumes simulate_lds returns (x, y, e), so y is index 1.
+    Compute one shared x-axis range across all SAME and DIFFERENT realizations.
     """
-    out = simulate_lds(n, A, C, L, rng, e_scale)
-    return out[1] if isinstance(out, tuple) else out     # y ∈ R^{n, d_y}  
+    all_vals = []
+
+    for d in list(same_list) + list(diff_list):
+        arr = np.asarray(d, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size > 0:
+            all_vals.append(arr)
+
+    if len(all_vals) == 0:
+        return (0.0, 1.0)
+
+    all_vals = np.concatenate(all_vals)
+
+    if all_vals.size == 1:
+        x = float(all_vals[0])
+        return (max(0.0, x - 1.0), x + 1.0)
+
+    x_min, x_max = np.quantile(all_vals, [lower_q, upper_q])
+
+    if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
+        x_min = float(np.min(all_vals))
+        x_max = float(np.max(all_vals))
+        if x_min == x_max:
+            x_min = max(0.0, x_min - 1.0)
+            x_max = x_max + 1.0
+
+    return (float(x_min), float(x_max))
 
 
-# Fit VAR(p) and return objects needed for isotropic metric
-def fit_var_and_components(y: np.ndarray, p: int):
-    """
-    Fit a VAR(p) model via least squares and return the components needed
-    for the Mahal. distance between VAR parameter vectors.
-
-    Parameters:                 |   Returns:                                     |    Internal Shapes:
-                                |                                                |    
-    y: np.ndarray               |   pi_hat:    np.ndarray                        |    X      ∈ R^{T x (p d_y)}
-       observed time series     |              vectorized CAR coeff. (Phi)       |    
-       shape - (n, d_y)         |              ∈ R^{(p * d_y^2), 1}              |    Y      ∈ R^{T x d_y}
-                                |                                                |   
-    p: int                      |   Sigma_hat: np.ndarray                        |    B_hat  ∈ R^{(p * d_y) x d_y}
-       VAR order                |              residual covariance matrix        |
-       i.e., number of lags     |              ∈ R^{d_y, d_y}                    |    U_hat  ∈ R^{T x d_y}
-                                |              = (U^T @ U) / T                   |    
-                                |                                                |    Phi_i  ∈ R^{d_y x d_y}
-                                |   QX_hat:    np.ndarray                        |
-                                |              regressor covariance matrix       |    T      = n - p
-                                |              ∈ R^{(p * d_y),(p * d_y)}         |
-                                |              = (X^T @ X) / T                   |
-    """
-
-    X, Y = build_var_xy(y, p=p)
-    # X ∈ R^{T x (p d_y)}, Y ∈ R^{T x d_y}
-
-    T = X.shape[0] # T = n - p
-    if T <= 0:
-        raise ValueError(f"Empty VAR design matrix: got T={T}. Increase n or decrease p.")
-
-    B_hat = fit_ls(Y, X)              # ∈ R^{(p * d_y) x d_y}
-    U_hat = Y - X @ B_hat             # ∈ R^{T x d_y}
-
-
-
-    d_y = Y.shape[1]
-    Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y) # list of p matrices, each Phi_i ∈ R^{d_y, d_y}
-
-    pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list]) # ∈ R^{(p * d_y^2), 1}
-    return pi_hat
-
-
-
-# KDE utilities
 def _kde_fallback(xs: np.ndarray, dist: np.ndarray) -> np.ndarray:
     """
     Simple Gaussian-mixture KDE fallback for near-singular cases.
     """
-    dist = np.asarray(dist)
+    dist = np.asarray(dist, dtype=float)
+    dist = dist[np.isfinite(dist)]
     n = dist.size
 
     if n == 0:
@@ -230,21 +165,28 @@ def _kde_fallback(xs: np.ndarray, dist: np.ndarray) -> np.ndarray:
     return ys
 
 
-def plot_kde_per_realization(same_list, diff_list, tau=None):
+def plot_kde_per_realization(same_list, diff_list, tau=None, xlim=None):
     """
     For each realization, plot SAME KDE vs DIFFERENT KDE.
     """
     n_realizations = len(same_list)
 
     for i in range(n_realizations):
-        same_vals = np.asarray(same_list[i]) # array ∈ R^trials 
-        diff_vals = np.asarray(diff_list[i]) # array ∈ R^trials
+        same_vals = np.asarray(same_list[i], dtype=float)
+        diff_vals = np.asarray(diff_list[i], dtype=float)
+
+        same_vals = same_vals[np.isfinite(same_vals)]
+        diff_vals = diff_vals[np.isfinite(diff_vals)]
 
         if same_vals.size < 2 or diff_vals.size < 2:
             continue
 
-        xmin = min(same_vals.min(), diff_vals.min())
-        xmax = max(same_vals.max(), diff_vals.max())
+        if xlim is not None:
+            xmin, xmax = xlim
+        else:
+            xmin = min(same_vals.min(), diff_vals.min())
+            xmax = max(same_vals.max(), diff_vals.max())
+
         x = np.linspace(xmin, xmax, 500)
 
         try:
@@ -260,14 +202,15 @@ def plot_kde_per_realization(same_list, diff_list, tau=None):
             ys_diff = _kde_fallback(x, diff_vals)
 
         plt.figure(figsize=(6, 4))
-        plt.plot(x, ys_same, label="Same KDE", linewidth=2)
-        plt.plot(x, ys_diff, label="Different KDE", linewidth=2)
+        plt.plot(x, ys_same, label="H$_0$", linewidth=2)
+        plt.plot(x, ys_diff, label="H$_1$", linewidth=2)
 
-        plt.title(f"Probability Distribution Comparison: Realization {i+1}")
+        plt.title(f"Probability Distribution Comparison: Realization {i + 1}")
         plt.xlabel("Isotropic Distance")
         plt.ylabel("Probability Density")
+        plt.xlim(xmin, xmax)
         if tau is not None:
-            plt.axvline(tau, color='red', linestyle="--", linewidth=1.5, label=r"$\tau$")
+            plt.axvline(tau, color="red", linestyle="--", linewidth=1.5, label=r"$\tau$")
         plt.legend()
         plt.grid(alpha=0.3)
         plt.tight_layout()
@@ -279,23 +222,30 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
     Plot one KDE per realization on the same graph.
     """
     plt.figure(figsize=(8, 5))
-    dists = [np.asarray(d) for d in distributions if np.asarray(d).size > 0]
+    dists = []
+    for d in distributions:
+        arr = np.asarray(d, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size > 0:
+            dists.append(arr)
+
     if len(dists) == 0:
         print(f"[plot_kde_overlay] Nothing to plot for: {title}")
         return
 
     all_vals = np.concatenate(dists)
 
-    if xlim is None:
-        lo, hi = np.quantile(all_vals, [0.001, 0.999])
-        xs = np.linspace(lo, hi, gridsize)
-        plt.xlim(0, 400)
-    else:
+    if xlim is not None:
         xs = np.linspace(xlim[0], xlim[1], gridsize)
         plt.xlim(xlim[0], xlim[1])
+    else:
+        lo, hi = np.quantile(all_vals, [0.001, 0.999])
+        xs = np.linspace(lo, hi, gridsize)
+        plt.xlim(lo, hi)
 
     for i, dist in enumerate(distributions):
-        dist = np.asarray(dist)
+        dist = np.asarray(dist, dtype=float)
+        dist = dist[np.isfinite(dist)]
         if dist.size < 2 or np.std(dist) == 0:
             continue
 
@@ -304,19 +254,53 @@ def plot_kde_overlay(distributions, title: str, gridsize: int = 400, bw_method=N
         except Exception:
             ys = _kde_fallback(xs, dist)
 
-        plt.plot(xs, ys, alpha=0.75, label=f"Realization {i+1}")
+        plt.plot(xs, ys, alpha=0.75, label=f"Realization {i + 1}")
 
     plt.title(title)
-    plt.xlabel("isotropic Distance")
+    plt.xlabel("Isotropic Distance")
     plt.ylabel("Estimated Density")
     plt.grid(alpha=0.3)
-    #plt.legend()
     if tau is not None:
-        plt.axvline(tau, color='red', linestyle="--", linewidth=1.5, label=r"$\tau$")
+        plt.axvline(tau, color="red", linestyle="--", linewidth=1.5, label=r"$\tau$")
+    plt.tight_layout()
     plt.show()
 
 
+def plot_histograms_shared_xlim(same_list, diff_list, bins=30, xlim=None, tau=None):
+    """
+    Shared-range histogram for pooled SAME and DIFFERENT distances.
+    """
+    same = np.concatenate([np.asarray(d, dtype=float) for d in same_list]) if len(same_list) > 0 else np.array([])
+    diff = np.concatenate([np.asarray(d, dtype=float) for d in diff_list]) if len(diff_list) > 0 else np.array([])
+
+    same = same[np.isfinite(same)]
+    diff = diff[np.isfinite(diff)]
+
+    if same.size == 0 or diff.size == 0:
+        print("[plot_histograms_shared_xlim] Not enough finite pooled values to plot.")
+        return
+
+    if xlim is None:
+        xlim = compute_global_xlim(same_list, diff_list)
+
+    plt.figure(figsize=(7, 4))
+    plt.hist(same, bins=bins, range=xlim, alpha=0.6, density=True, label=r"H$_0$")
+    plt.hist(diff, bins=bins, range=xlim, alpha=0.6, density=True, label=r"H$_1$")
+    if tau is not None:
+        plt.axvline(tau, color="red", linestyle="--", linewidth=1.5, label=r"$\tau$")
+    plt.xlim(*xlim)
+    plt.xlabel("Isotropic Distance")
+    plt.ylabel("Density")
+    plt.title(r"Pooled H$_0$ vs H$_1$ Histograms")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+
+
 # IR profile for one realization
+
 def ir_profile_for_realization(
     systems,
     idx: int,
@@ -325,16 +309,16 @@ def ir_profile_for_realization(
     top_k: int = 5,
 ):
     """
-    Compare one realization against all others via IR distance.
+    Compare one realization against all others via theory-aligned IR distance.
     """
     R = len(systems)
     if not (0 <= idx < R):
-        raise ValueError(f"idx must be in [0, {R-1}]")
+        raise ValueError(f"idx must be in [0, {R - 1}]")
 
     A1, C1, L1 = systems[idx]
 
-    dists = []  # one scalar IR distance per comparison realization
-    js = []     # corresponding realization indices
+    dists = []
+    js = []
 
     for j in range(R):
         if j == idx:
@@ -358,7 +342,7 @@ def ir_profile_for_realization(
         "nearest_neighbor_dist": float(dists[order[0]]),
     }
 
-    print(f"\nIR profile for Realization {idx+1} (K={K_ir}, normalize={normalize})")
+    print(f"\nIR profile for Realization {idx + 1} (K={K_ir}, normalize={normalize})")
     print(
         f"  mean={summary['mean']:.6g}, median={summary['median']:.6g}, "
         f"min={summary['min']:.6g}, max={summary['max']:.6g}"
@@ -371,13 +355,14 @@ def ir_profile_for_realization(
     print(f"  {top_k} closest realizations:")
     for k in range(min(top_k, len(order))):
         j = js[order[k]]
-        print(f"    -> Realization {j+1}: D_H = {dists[order[k]]:.6g}")
+        print(f"    -> Realization {j + 1}: D_H = {dists[order[k]]:.6g}")
 
     return dists, summary
 
 
 
-# Main experiment: realization sensitivity
+# Main experiment
+
 def run_realization_sensitivity(
     regime_name: str,
     rho_min: float,
@@ -390,9 +375,12 @@ def run_realization_sensitivity(
     d_y: int = 5,
     e_scale: float = 0.2,
     seed: int = 0,
-    diff_regime_y3: tuple[float, float] | None = None, 
+    diff_regime_y3: tuple[float, float] | None = None,
     diff_regime_y4: tuple[float, float] | None = None,
     K_ir: int = 25,
+    a_rho_max: float = 0.98,
+    c_scale: float = 0.15,
+    l_scale: float = 0.15,
 ):
     """
     Outer loop over fixed realizations.
@@ -403,104 +391,123 @@ def run_realization_sensitivity(
 
     DIFFERENT condition:
         y3 vs y4 from two independently sampled LDS realizations
-        (no reuse of y1)
 
-    If diff_regime is None:
-        y3 and y4 are both drawn from the same regime [rho_min, rho_max].
-
-    If diff_regime is not None:
-        y3 is drawn from [rho_min, rho_max]
-        y4 is drawn from diff_regime
+    IMPORTANT:
+    The regime band [rho_min, rho_max] refers to rho(F), where F = A - L C.
     """
     rng = np.random.default_rng(seed)
 
     all_same_M, all_diff_M = [], []
-
     all_same_delta_pi = []
     all_diff_delta_pi = []
-    
 
-    print(f"\n--- Regime: {regime_name}  rho in [{rho_min}, {rho_max}] ---\n")
+    print(f"\n--- Regime: {regime_name}  rho(F) in [{rho_min}, {rho_max}] ---\n")
 
     systems: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-
     diff_pairs: list[
         tuple[
             tuple[np.ndarray, np.ndarray, np.ndarray],
-            tuple[np.ndarray, np.ndarray, np.ndarray]
-
+            tuple[np.ndarray, np.ndarray, np.ndarray],
         ]
     ] = []
 
     for r in range(realizations):
-        print(f"Realization {r+1}/{realizations}")
+        print(f"Realization {r + 1}/{realizations}")
 
-        # Fixed realization for SAME comparisons in this outer loop
-        A = sample_stable_A(d_x, rho_min, rho_max, rng)              # A: (d_x, d_x)
-        C = sample_C(d_y, d_x, rng)                                  # C: (d_y, d_x)
-        L = sample_L(d_x, d_y, rng)                                  # L(1,2): (d_x, d_y)
+        A, C, L = sample_system_with_F_in_band(
+            d_x, d_y, rho_min, rho_max, rng,
+            a_rho_max=a_rho_max, c_scale=c_scale, l_scale=l_scale
+        )
 
-        # System for y3
         if diff_regime_y3 is None:
             rho_min3, rho_max3 = rho_min, rho_max
         else:
             rho_min3, rho_max3 = diff_regime_y3
 
+        A3, C3, L3 = sample_system_with_F_in_band(
+            d_x, d_y, rho_min3, rho_max3, rng,
+            a_rho_max=a_rho_max, c_scale=c_scale, l_scale=l_scale
+        )
 
-        A3 = sample_stable_A(d_x, rho_min3, rho_max3, rng)           # A3: (d_x, d_x)
-        C3 = sample_C(d_y, d_x, rng)                                 # C3: (d_y, d_x)
-        L3 = sample_L(d_x, d_y, rng)                                 # L3: (d_x, d_y)
-  
-        # System for y4
         if diff_regime_y4 is None:
             rho_min4, rho_max4 = rho_min, rho_max
         else:
             rho_min4, rho_max4 = diff_regime_y4
 
-        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)   # A4: (d_x, d_x)
-        C4 = sample_C(d_y, d_x, rng)                                           # C4: (d_y, d_x)
-        L4 = sample_L(d_x, d_y, rng)                                           # L4: (d_x, d_y)
+        A4, C4, L4 = sample_system_with_F_in_band(
+            d_x, d_y, rho_min4, rho_max4, rng,
+            a_rho_max=a_rho_max, c_scale=c_scale, l_scale=l_scale
+        )
 
         systems.append((A, C, L))
         diff_pairs.append(((A3, C3, L3), (A4, C4, L4)))
 
-        D_same_M, D_diff_M = [], [] # vectors of scalars to be populated / appended below 
-        cond_QX_list = []
+        rho_F_same = spectral_radius(effective_F(A, C, L))
+        rho_F_3 = spectral_radius(effective_F(A3, C3, L3))
+        rho_F_4 = spectral_radius(effective_F(A4, C4, L4))
+        rho_A_same = spectral_radius(A)
+        rho_A_3 = spectral_radius(A3)
+        rho_A_4 = spectral_radius(A4)
+
+        print(f"  target rho(F) band SAME = [{rho_min}, {rho_max}]")
+        print(f"  target rho(F) band y3   = [{rho_min3}, {rho_max3}]")
+        print(f"  target rho(F) band y4   = [{rho_min4}, {rho_max4}]")
+        print(f"  rho(F_same) = {rho_F_same:.6f}, rho(A_same) = {rho_A_same:.6f}")
+        print(f"  rho(F_y3)   = {rho_F_3:.6f}, rho(A_y3)   = {rho_A_3:.6f}")
+        print(f"  rho(F_y4)   = {rho_F_4:.6f}, rho(A_y4)   = {rho_A_4:.6f}")
+
+        D_same_M, D_diff_M = [], []
 
         for _ in range(trials):
-            
-            # SAME LDS: y1 vs y2 from the same fixed system
-            y1 = simulate_y_only(n, A, C, L, rng, e_scale)   # y1: (n, d_y)
-            y2 = simulate_y_only(n, A, C, L, rng, e_scale)   # y2: (n, d_y)
+            # SAME
+            try:
+                y1 = simulate_y_only(n, A, C, L, rng, e_scale)
+                y2 = simulate_y_only(n, A, C, L, rng, e_scale)
 
-            pi1 = fit_var_and_components(y1, p) # pi1: (p * d_y^2, 1)
-            pi2 = fit_var_and_components(y2, p) # pi2: (p * d_y^2, 1)
+                pi1 = fit_var_and_components(y1, p)
+                pi2 = fit_var_and_components(y2, p)
 
-            all_same_delta_pi.append((pi1 - pi2).ravel())
+                delta_same = (pi1 - pi2).ravel()
+                d_same = isotropic_var_distance(pi1, pi2)
 
+                if np.all(np.isfinite(delta_same)):
+                    all_same_delta_pi.append(delta_same)
+                if np.isfinite(d_same):
+                    D_same_M.append(float(d_same))
 
-            d_same = isotropic_var_distance(pi1, pi2) # scalar distance
-            D_same_M.append(d_same)
+            except Exception:
+                pass
 
-            
-            # DIFFERENT LDS: y3 vs y4 from two fixed but distinct and independent LDS realizations 
-            y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale) # y3: (n, d_y)
-            y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale) # y4: (n, d_y)
+            # DIFFERENT
+            try:
+                y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale)
+                y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale)
 
-            pi3 = fit_var_and_components(y3, p) # pi3: (p * d, y^2)
-            pi4 = fit_var_and_components(y4, p) # pi4: (p * d, y^2)
+                pi3 = fit_var_and_components(y3, p)
+                pi4 = fit_var_and_components(y4, p)
 
-            all_diff_delta_pi.append((pi3 - pi4).ravel())
+                delta_diff = (pi3 - pi4).ravel()
+                d_diff = isotropic_var_distance(pi3, pi4)
 
+                if np.all(np.isfinite(delta_diff)):
+                    all_diff_delta_pi.append(delta_diff)
+                if np.isfinite(d_diff):
+                    D_diff_M.append(float(d_diff))
 
-            d_diff = isotropic_var_distance(pi3, pi4)
-            D_diff_M.append(d_diff)
+            except Exception:
+                pass
 
-        # Realization summary
+        if len(D_same_M) == 0 or len(D_diff_M) == 0:
+            print("  Warning: one of the distance lists is empty for this realization.")
+            print()
+            all_same_M.append(D_same_M)
+            all_diff_M.append(D_diff_M)
+            continue
+
         print("  isotropic same mean:", float(np.mean(D_same_M)))
-        print("  isotropic same std:", float(np.std(D_same_M, ddof=1)))
+        print("  isotropic same std:", float(np.std(D_same_M, ddof=1)) if len(D_same_M) > 1 else 0.0)
         print("  isotropic diff mean:", float(np.mean(D_diff_M)))
-        print("  isotropic diff std:", float(np.std(D_diff_M, ddof=1)))
+        print("  isotropic diff std:", float(np.std(D_diff_M, ddof=1)) if len(D_diff_M) > 1 else 0.0)
 
         d_ir_pair = impulse_response_distance(
             A3, C3, L3,
@@ -510,23 +517,18 @@ def run_realization_sensitivity(
         )
         print("  IR distance of fixed DIFF pair:", d_ir_pair)
 
-
-
-        same = np.asarray(D_same_M)
-        diff = np.asarray(D_diff_M)
+        same = np.asarray(D_same_M, dtype=float)
+        diff = np.asarray(D_diff_M, dtype=float)
 
         print("  SAME q50/q90/q99:", np.quantile(same, [0.5, 0.9, 0.99]))
         print("  DIFF q50/q90/q99:", np.quantile(diff, [0.5, 0.9, 0.99]))
-        print("  Pr(DIFF > SAME):", float(np.mean(diff > same)))
-        prob_cross = np.mean(diff[:, None] > same[None, :])
-        print("  Cross Prob.:", prob_cross)
+        print("  Cross Prob.:", float(np.mean(diff[:, None] > same[None, :])))
         print()
 
         all_same_M.append(D_same_M)
         all_diff_M.append(D_diff_M)
 
-    
-    # Pairwise IR distances across fixed outer-loop realizations
+    # Pairwise IR distances across SAME outer-loop realizations
     ir_dists: list[float] = []
 
     for i in range(len(systems)):
@@ -570,7 +572,7 @@ def run_realization_sensitivity(
             f"mean={np.mean(diff_ir_arr):.4g}, std={std:.4g}, "
             f"min={np.min(diff_ir_arr):.4g}, max={np.max(diff_ir_arr):.4g}"
         )
-        
+
     if len(all_same_delta_pi) > 0:
         same_delta_arr = np.asarray(all_same_delta_pi)
         same_var_per_coord = np.var(same_delta_arr, axis=0)
@@ -591,9 +593,11 @@ def run_realization_sensitivity(
         print("  max:", float(np.max(diff_var_per_coord)))
         print("  max/min ratio:", float(np.max(diff_var_per_coord) / (np.min(diff_var_per_coord) + 1e-12)))
 
-
     return all_same_M, all_diff_M, ir_dists, diff_ir_dists, systems, diff_pairs
 
+
+
+# p-sweep
 
 def run_p_sweep(
     p_values,
@@ -611,9 +615,13 @@ def run_p_sweep(
     diff_regime_y4: tuple[float, float] | None = None,
     K_ir: int = 25,
     best_by: str = "f1",
+    a_rho_max: float = 0.98,
+    c_scale: float = 0.15,
+    l_scale: float = 0.15,
 ):
     """
     Sweep over VAR orders p and record pooled classification performance.
+    The regime is defined by rho(F), where F = A - L C.
     """
     sweep_results = []
 
@@ -637,6 +645,9 @@ def run_p_sweep(
             diff_regime_y3=diff_regime_y3,
             diff_regime_y4=diff_regime_y4,
             K_ir=K_ir,
+            a_rho_max=a_rho_max,
+            c_scale=c_scale,
+            l_scale=l_scale,
         )
 
         summary = summarize_threshold_analysis(
@@ -654,7 +665,7 @@ def run_p_sweep(
             "best_threshold": best["threshold"],
             "accuracy": best["accuracy"],
             "precision": best["precision"],
-            "recall": best["recall"],        # TPR
+            "recall": best["recall"],
             "specificity": best["specificity"],
             "fpr": best["fpr"],
             "fnr": best["fnr"],
@@ -679,6 +690,7 @@ def run_p_sweep(
         print(f"  F1             = {row['f1']:.6f}")
 
     return sweep_results
+
 
 def plot_p_sweep_results(sweep_results):
     """
@@ -733,83 +745,89 @@ def plot_p_sweep_results(sweep_results):
     plt.show()
 
 
-
-
 # Run
+
 if __name__ == "__main__":
 
     same_M, diff_M, ir_dists, diff_ir_dists, systems, diff_pairs = run_realization_sensitivity(
-        regime_name="short (within-regime diff)",
+        regime_name="F-band experiment",
         rho_min=0.75,
         rho_max=0.85,
         realizations=25,
         trials=40,
-        n=1500,
-        p=10,
+        n=200,
+        p=25,
         d_x=5,
         d_y=5,
         e_scale=0.2,
         seed=0,
-        diff_regime_y3=(0.5, 0.7),
-        diff_regime_y4=(0.75, 0.85),
+        diff_regime_y3=(0.30, 0.40),
+        diff_regime_y4=(0.85, 0.95),
         K_ir=25,
+        a_rho_max=0.98,
+        c_scale=1,
+        l_scale=1,
     )
 
-    # IR profile per realization
-#    for r in range(1, len(systems) + 1):
-#        ir_profile_for_realization(
-#            systems,
-#            idx=r - 1,
-#            K_ir=25,
-#            normalize=True,
-#            top_k=3,
-#        )
-#
-    # Histogram of pairwise IR distances
-#    if len(ir_dists) > 0:
-#        plt.figure()
-#        plt.hist(ir_dists, bins=15)
-#        plt.title("Pairwise impulse-response distances across realizations")
-#        plt.xlabel("D_H")
-#        plt.ylabel("Count")
-#        plt.grid(alpha=0.3)
-#        plt.show()
+    # Shared x-limits across all KDE plots
+    shared_xlim = compute_global_xlim(same_M, diff_M, lower_q=0.001, upper_q=0.999)
+    print("\nShared xlim used for plots:", shared_xlim)
 
-    # KDE overlays across realizations
     plot_kde_overlay(
         same_M,
-        " SAME Prob. Distributions across realizations",
+        r"H$_0$ Probability Distributions across realizations",
         bw_method="silverman",
-        tau=22
-
+        xlim=shared_xlim,
+        tau=0.911169,
     )
 
     plot_kde_overlay(
         diff_M,
-        "DIFFERENT Prob. Distributions across realization",
+        r"H$_1$ Probability Distributions across realizations",
         bw_method="silverman",
-        tau=22
+        xlim=shared_xlim,
+        tau=0.911169,
     )
 
-    # Per-realization SAME vs DIFFERENT KDE
-    plot_kde_per_realization(same_M, diff_M, tau=22)
+    plot_kde_per_realization(
+        same_M,
+        diff_M,
+        tau=0.911169,
+        xlim=shared_xlim,
+    )
 
+    plot_histograms_shared_xlim(
+        same_M,
+        diff_M,
+        bins=30,
+        xlim=shared_xlim,
+        tau=0.911169,
+    )
 
-
-
-    # Threshold Analysis
-
+    # Keep summarize_threshold_analysis non-plotting to avoid NaN/hist-range issues
+    # in external plotting code. We use our own shared-range plots above instead.
     summary = summarize_threshold_analysis(
         same_M,
         diff_M,
         best_by="f1",
-        make_plots=True
+        make_plots=False,
     )
 
-    tau = 22
+    print("\nThreshold summary:")
+    print(f"  AUC            = {summary['auc']:.6f}")
+    print(f"  Best threshold = {summary['best']['threshold']:.6f}")
+    print(f"  Accuracy       = {summary['best']['accuracy']:.6f}")
+    print(f"  Precision      = {summary['best']['precision']:.6f}")
+    print(f"  Recall / TPR   = {summary['best']['recall']:.6f}")
+    print(f"  Specificity    = {summary['best']['specificity']:.6f}")
+    print(f"  FPR            = {summary['best']['fpr']:.6f}")
+    print(f"  FNR            = {summary['best']['fnr']:.6f}")
+    print(f"  F1             = {summary['best']['f1']:.6f}")
 
-    summary = evaluate_H0(same_M, tau)
-    print_H0_summary(summary)
+    tau = 0.911169
 
-    summary2 = evaluate_H1(diff_M, tau)
-    print_H1_summary(summary2)
+    summary_H0 = evaluate_H0(same_M, tau)
+    print_H0_summary(summary_H0)
+
+    summary_H1 = evaluate_H1(diff_M, tau)
+    print_H1_summary(summary_H1)

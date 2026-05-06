@@ -713,14 +713,14 @@ if __name__ == "__main__":
         rho_min=0.75,
         rho_max=0.85,
         realizations=25,
-        trials=40,
-        n=1500,
+        trials=50,
+        n=5000,
         p=2,
         d_x=5,
         d_y=5,
         e_scale=0.2,
         seed=0,
-        diff_regime_y3=(0.5, 0.7),
+        diff_regime_y3=(0.3, 0.4),
         diff_regime_y4=(0.75, 0.85),
         K_ir=25,
     )
@@ -750,7 +750,7 @@ if __name__ == "__main__":
         same_M,
         "Mahalanobis SAME KDE across realizations (short)",
         bw_method="silverman",
-        tau=57.308373
+        tau=47.913492
 
     )
 
@@ -758,11 +758,11 @@ if __name__ == "__main__":
         diff_M,
         "Mahalanobis DIFFERENT KDE across realizations (short)",
         bw_method="silverman",
-        tau=57.308373
+        tau=47.913492
     )
 
     # Per-realization SAME vs DIFFERENT KDE
-    plot_kde_per_realization(same_M, diff_M, tau=57.308373)
+    plot_kde_per_realization(same_M, diff_M, tau=47.913492)
 
 
 
@@ -776,7 +776,7 @@ if __name__ == "__main__":
         make_plots=True
     )
 
-    tau = 57.308373
+    tau = 47.913492
 
     summary = evaluate_H0(same_M, tau)
     print_H0_summary(summary)

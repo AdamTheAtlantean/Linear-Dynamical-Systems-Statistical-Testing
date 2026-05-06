@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 from lds import simulate_lds
 from var_model import build_var_xy, fit_ls, unpack_B_to_Phi
-from metrics import mahalanobis_var_distance
+from metrics import mahalanobis_var_distance, isotropic_var_distance
 from threshold import summarize_threshold_analysis
 
 """
@@ -186,11 +186,11 @@ def fit_var_and_components(y: np.ndarray, p: int):
     Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y)
     pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list])
 
-    return pi_hat, Sigma_hat, QX_hat
+    return pi_hat
 
 
 
-# Core experiment: fixed realizations, repeated trials
+# Main experiment: realization sensitivity
 def run_realization_sensitivity(
     regime_name: str,
     rho_min: float,
@@ -198,12 +198,12 @@ def run_realization_sensitivity(
     realizations: int = 5,
     trials: int = 120,
     n: int = 1500,
-    p: int = 2,
+    p: int = 10,
     d_x: int = 5,
     d_y: int = 5,
     e_scale: float = 0.2,
     seed: int = 0,
-    diff_regime_y3: tuple[float, float] | None = None,
+    diff_regime_y3: tuple[float, float] | None = None, 
     diff_regime_y4: tuple[float, float] | None = None,
     K_ir: int = 25,
 ):
@@ -216,92 +216,104 @@ def run_realization_sensitivity(
 
     DIFFERENT condition:
         y3 vs y4 from two independently sampled LDS realizations
+        (no reuse of y1)
 
-    If diff_regime_y3 is None:
+    If diff_regime is None:
+        y3 and y4 are both drawn from the same regime [rho_min, rho_max].
+
+    If diff_regime is not None:
         y3 is drawn from [rho_min, rho_max]
-
-    If diff_regime_y4 is None:
-        y4 is drawn from [rho_min, rho_max]
+        y4 is drawn from diff_regime
     """
     rng = np.random.default_rng(seed)
 
     all_same_M, all_diff_M = [], []
 
+    all_same_delta_pi = []
+    all_diff_delta_pi = []
+    
+
     print(f"\n--- Regime: {regime_name}  rho in [{rho_min}, {rho_max}] ---\n")
 
     systems: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+
     diff_pairs: list[
         tuple[
             tuple[np.ndarray, np.ndarray, np.ndarray],
             tuple[np.ndarray, np.ndarray, np.ndarray]
+
         ]
     ] = []
 
     for r in range(realizations):
         print(f"Realization {r+1}/{realizations}")
 
-        # SAME system
-        A = sample_stable_A(d_x, rho_min, rho_max, rng)
-        C = sample_C(d_y, d_x, rng)
-        L = sample_L(d_x, d_y, rng)
+        # Fixed realization for SAME comparisons in this outer loop
+        A = sample_stable_A(d_x, rho_min, rho_max, rng)              # A: (d_x, d_x)
+        C = sample_C(d_y, d_x, rng)                                  # C: (d_y, d_x)
+        L = sample_L(d_x, d_y, rng)                                  # L(1,2): (d_x, d_y)
 
-        # DIFF system y3
+        # System for y3
         if diff_regime_y3 is None:
             rho_min3, rho_max3 = rho_min, rho_max
         else:
             rho_min3, rho_max3 = diff_regime_y3
 
-        A3 = sample_stable_A(d_x, rho_min3, rho_max3, rng)
-        C3 = sample_C(d_y, d_x, rng)
-        L3 = sample_L(d_x, d_y, rng)
 
-        # DIFF system y4
+        A3 = sample_stable_A(d_x, rho_min3, rho_max3, rng)           # A3: (d_x, d_x)
+        C3 = sample_C(d_y, d_x, rng)                                 # C3: (d_y, d_x)
+        L3 = sample_L(d_x, d_y, rng)                                 # L3: (d_x, d_y)
+  
+        # System for y4
         if diff_regime_y4 is None:
             rho_min4, rho_max4 = rho_min, rho_max
         else:
             rho_min4, rho_max4 = diff_regime_y4
 
-        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)
-        C4 = sample_C(d_y, d_x, rng)
-        L4 = sample_L(d_x, d_y, rng)
+        A4 = sample_stable_A_identity_centered(d_x, rho_min4, rho_max4, rng)   # A4: (d_x, d_x)
+        C4 = sample_C(d_y, d_x, rng)                                           # C4: (d_y, d_x)
+        L4 = sample_L(d_x, d_y, rng)                                           # L4: (d_x, d_y)
 
         systems.append((A, C, L))
         diff_pairs.append(((A3, C3, L3), (A4, C4, L4)))
 
-        D_same_M, D_diff_M = [], []
+        D_same_M, D_diff_M = [], [] # vectors of scalars to be populated / appended below 
         cond_QX_list = []
 
         for _ in range(trials):
-            # SAME
-            y1 = simulate_y_only(n, A, C, L, rng, e_scale)
-            y2 = simulate_y_only(n, A, C, L, rng, e_scale)
+            
+            # SAME LDS: y1 vs y2 from the same fixed system
+            y1 = simulate_y_only(n, A, C, L, rng, e_scale)   # y1: (n, d_y)
+            y2 = simulate_y_only(n, A, C, L, rng, e_scale)   # y2: (n, d_y)
 
-            pi1, Sigma1, QX1 = fit_var_and_components(y1, p)
-            pi2, Sigma2, QX2 = fit_var_and_components(y2, p)
+            pi1 = fit_var_and_components(y1, p) # pi1: (p * d_y^2, 1)
+            pi2 = fit_var_and_components(y2, p) # pi2: (p * d_y^2, 1)
 
-            cond_QX_list.append(np.linalg.cond(QX1))
-            cond_QX_list.append(np.linalg.cond(QX2))
+            all_same_delta_pi.append((pi1 - pi2).ravel())
 
-            d_same = mahalanobis_var_distance(pi1, pi2, Sigma1, Sigma2, QX1, QX2)
+
+            d_same = isotropic_var_distance(pi1, pi2) # scalar distance
             D_same_M.append(d_same)
 
-            # DIFFERENT
-            y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale)
-            y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale)
+            
+            # DIFFERENT LDS: y3 vs y4 from two fixed but distinct and independent LDS realizations 
+            y3 = simulate_y_only(n, A3, C3, L3, rng, e_scale) # y3: (n, d_y)
+            y4 = simulate_y_only(n, A4, C4, L4, rng, e_scale) # y4: (n, d_y)
 
-            pi3, Sigma3, QX3 = fit_var_and_components(y3, p)
-            pi4, Sigma4, QX4 = fit_var_and_components(y4, p)
+            pi3 = fit_var_and_components(y3, p) # pi3: (p * d, y^2)
+            pi4 = fit_var_and_components(y4, p) # pi4: (p * d, y^2)
 
-            cond_QX_list.append(np.linalg.cond(QX3))
-            cond_QX_list.append(np.linalg.cond(QX4))
+            all_diff_delta_pi.append((pi3 - pi4).ravel())
 
-            d_diff = mahalanobis_var_distance(pi3, pi4, Sigma3, Sigma4, QX3, QX4)
+
+            d_diff = isotropic_var_distance(pi3, pi4)
             D_diff_M.append(d_diff)
 
-        print("  Mahalanobis same mean:", float(np.mean(D_same_M)))
-        print("  Mahalanobis same std:", float(np.std(D_same_M, ddof=1)))
-        print("  Mahalanobis diff mean:", float(np.mean(D_diff_M)))
-        print("  Mahalanobis diff std:", float(np.std(D_diff_M, ddof=1)))
+        # Realization summary
+        print("  isotropic same mean:", float(np.mean(D_same_M)))
+        print("  isotropic same std:", float(np.std(D_same_M, ddof=1)))
+        print("  isotropic diff mean:", float(np.mean(D_diff_M)))
+        print("  isotropic diff std:", float(np.std(D_diff_M, ddof=1)))
 
         d_ir_pair = impulse_response_distance(
             A3, C3, L3,
@@ -311,9 +323,7 @@ def run_realization_sensitivity(
         )
         print("  IR distance of fixed DIFF pair:", d_ir_pair)
 
-        cond_arr = np.array(cond_QX_list)
-        print("  QX condition number (median):", np.median(cond_arr))
-        print("  QX condition number (max):", np.max(cond_arr))
+
 
         same = np.asarray(D_same_M)
         diff = np.asarray(D_diff_M)
@@ -328,7 +338,10 @@ def run_realization_sensitivity(
         all_same_M.append(D_same_M)
         all_diff_M.append(D_diff_M)
 
+    
+    # Pairwise IR distances across fixed outer-loop realizations
     ir_dists: list[float] = []
+
     for i in range(len(systems)):
         A1, C1, L1 = systems[i]
         for j in range(i + 1, len(systems)):
@@ -349,6 +362,7 @@ def run_realization_sensitivity(
         )
 
     diff_ir_dists: list[float] = []
+
     for r in range(len(diff_pairs)):
         (A3, C3, L3), (A4, C4, L4) = diff_pairs[r]
         d_ir_diff = impulse_response_distance(
@@ -369,9 +383,29 @@ def run_realization_sensitivity(
             f"mean={np.mean(diff_ir_arr):.4g}, std={std:.4g}, "
             f"min={np.min(diff_ir_arr):.4g}, max={np.max(diff_ir_arr):.4g}"
         )
+        
+    if len(all_same_delta_pi) > 0:
+        same_delta_arr = np.asarray(all_same_delta_pi)
+        same_var_per_coord = np.var(same_delta_arr, axis=0)
+
+        print("\nSAME Δπ coordinate variance summary:")
+        print("  min:", float(np.min(same_var_per_coord)))
+        print("  median:", float(np.median(same_var_per_coord)))
+        print("  max:", float(np.max(same_var_per_coord)))
+        print("  max/min ratio:", float(np.max(same_var_per_coord) / (np.min(same_var_per_coord) + 1e-12)))
+
+    if len(all_diff_delta_pi) > 0:
+        diff_delta_arr = np.asarray(all_diff_delta_pi)
+        diff_var_per_coord = np.var(diff_delta_arr, axis=0)
+
+        print("\nDIFF Δπ coordinate variance summary:")
+        print("  min:", float(np.min(diff_var_per_coord)))
+        print("  median:", float(np.median(diff_var_per_coord)))
+        print("  max:", float(np.max(diff_var_per_coord)))
+        print("  max/min ratio:", float(np.max(diff_var_per_coord) / (np.min(diff_var_per_coord) + 1e-12)))
+
 
     return all_same_M, all_diff_M, ir_dists, diff_ir_dists, systems, diff_pairs
-
 
 
 # Regime helpers
@@ -444,7 +478,7 @@ def run_regime_sweep(
 
     sweep_results = []
 
-    for delta in delta_values:
+    for k, delta in enumerate(delta_values):
         diff_regime_y3, diff_regime_y4 = regimes_from_delta(a=a, w=w, delta=delta)
 
         print("\n" + "=" * 70)
@@ -465,7 +499,7 @@ def run_regime_sweep(
             d_x=d_x,
             d_y=d_y,
             e_scale=e_scale,
-            seed=seed,
+            seed=seed + k,
             diff_regime_y3=diff_regime_y3,
             diff_regime_y4=diff_regime_y4,
             K_ir=K_ir,

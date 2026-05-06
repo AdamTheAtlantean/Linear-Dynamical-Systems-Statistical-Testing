@@ -87,4 +87,19 @@ def sample_CL_in_band(
         f"after {max_tries} tries."
     )
 
+def simulate_y_only(
+    n: int,
+    A: np.ndarray,
+    C: np.ndarray,
+    L: np.ndarray,
+    rng: np.random.Generator,
+    e_scale: float,
+) -> np.ndarray:
+    """
+    Extract y from simulate_lds return.
+    Assumes simulate_lds returns (x, y, e), so y is index 1.
+    """
+    out = simulate_lds(n, A, C, L, rng, e_scale)
+    return out[1] if isinstance(out, tuple) else out
+
 

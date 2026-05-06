@@ -52,3 +52,31 @@ def unpack_B_to_Phi(B_hat, d_y, p):
         Phi.append(block.T)
     return Phi
 
+
+def fit_var_and_components(y: np.ndarray, p: int) -> np.ndarray:
+    """
+    Fit a VAR(p) model via least squares and return the vectorized estimated
+    coefficient stack pi_hat = vec(Phi_1, ..., Phi_p).
+    """
+    if not np.all(np.isfinite(y)):
+        raise ValueError("Non-finite values encountered in y before VAR fitting.")
+
+    X, Y = build_var_xy(y, p=p)
+
+    T = X.shape[0]
+    if T <= 0:
+        raise ValueError(f"Empty VAR design matrix: got T={T}. Increase n or decrease p.")
+
+    if not np.all(np.isfinite(X)) or not np.all(np.isfinite(Y)):
+        raise ValueError("Non-finite values encountered in X or Y.")
+
+    B_hat = fit_ls(Y, X)
+    d_y = Y.shape[1]
+    Phi_list = unpack_B_to_Phi(B_hat, p=p, d_y=d_y)
+
+    pi_hat = np.concatenate([Phi.flatten(order="F") for Phi in Phi_list])
+
+    if not np.all(np.isfinite(pi_hat)):
+        raise ValueError("Non-finite values encountered in pi_hat.")
+
+    return pi_hat

@@ -193,14 +193,6 @@ def fit_var_and_components(y: np.ndarray, p: int):
 
 
 
-
-
-
-
-
-
-
-
 # Main experiment: realization sensitivity
 def run_realization_sensitivity(
     regime_name: str,
