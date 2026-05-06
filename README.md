@@ -16,25 +16,28 @@ distances separate the null hypothesis from the alternative.
 
 The simulated LDS has the form
 
-```text
+$$
 x_{t+1} = A x_t + L e_t
+$$
+
+$$
 y_t     = C x_t + e_t
-```
+$$
 
 where `x_t` is the latent state, `y_t` is the observed output, and `e_t` is
 observation noise. A central object in the experiments is the effective memory
 matrix
 
-```text
+$$
 F = A - L C
-```
+$$
 
 For the observed process, the VAR-style impulse response coefficients are
 controlled by powers of this matrix:
 
-```text
-Phi_i = C F^(i-1) L
-```
+$$
+\Phi_{i} = C F^{(i-1)} L
+$$
 
 Thus, the spectral radius `rho(F)` determines how quickly the VAR coefficients
 decay. The newer experiments in this repository sample systems by controlling
